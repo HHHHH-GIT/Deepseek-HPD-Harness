@@ -31,6 +31,12 @@ H turns the default single-path agent run into a visible, complexity-aware workf
 | Progress depends on optional generic Todo state and may appear late or not at all. | Durable plan snapshots publish `planning`, ordered subtasks, active work, summary, completion, failure, and interruption to the H plan panel. | The plan appears immediately after complex routing, then each subtask advances in order. |
 | Failure and cancellation leave only the normal transcript to inspect. | Planner failures show a clear state before an Expert direct-answer fallback; interrupted plans preserve their completed work and never auto-resume. | Clearer recovery without silently repeating side effects. |
 
+## Configure and use H
+
+1. Open **Settings > Model Routing**. The conversation input is for sending messages; it does not offer a per-message model selector.
+2. Choose one model from the configured catalog for **Light Model** and another for **Expert Model**. Light handles simple tasks directly; Expert plans and executes complex tasks.
+3. Choose the reasoning-effort mode: **Auto** lets each selected model decide, while **Manual** enables a configured effort for each model. Changes save immediately. Start a conversation when configuration is complete; H evaluates and routes every task automatically.
+
 ## Run
 
 ```sh
