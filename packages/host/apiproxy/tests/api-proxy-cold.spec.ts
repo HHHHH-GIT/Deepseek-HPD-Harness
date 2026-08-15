@@ -570,9 +570,9 @@ describe('subagent ownership fence', () => {
     if (!queued.result.ok) expect(queued.result.error.code).toBe('agent-busy')
     expect(updateInbox).not.toHaveBeenCalled()
 
-    const models = await api.sessions.models(request({ sessionId: startingChild.id }))
-    expect(models.result.ok).toBe(false)
-    if (!models.result.ok) expect(models.result.error.code).toBe('agent-busy')
+    const rename = await api.sessions.rename(request({ sessionId: startingChild.id, title: 'nope' }))
+    expect(rename.result.ok).toBe(false)
+    if (!rename.result.ok) expect(rename.result.error.code).toBe('agent-busy')
 
     const create = await api.sessions.create(request({ sessionId: originChild.id, cwd: '/proj' }))
     expect(create.result.ok).toBe(false)
@@ -789,10 +789,10 @@ describe('sessions.prompt synchronous rejection', () => {
     })
     const api = createApiProxy(ctx, { defaultModelSelection: () => ({ provider: 'p', model: 'm' }), cwd: '/tmp' })
 
-    const models = await api.sessions.models(request({ sessionId }))
-    expect(models.result.ok).toBe(false)
-    if (!models.result.ok) {
-      expect(models.result.error).toMatchObject({
+    const rename = await api.sessions.rename(request({ sessionId, title: 'nope' }))
+    expect(rename.result.ok).toBe(false)
+    if (!rename.result.ok) {
+      expect(rename.result.error).toMatchObject({
         code: 'agent-busy',
         details: { reason: 'use subagent delivery for this child session' },
       })

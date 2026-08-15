@@ -56,37 +56,6 @@ function fakeApi(overrides: Partial<{ muxFrames: MuxFrame[]; hostFrames: HostFra
           result: { ok: false, error: { code: 'session-not-found', message: 'nope', details: { sessionId: request.payload.sessionId } } },
         }
       },
-      async models(request) {
-        return {
-          rpcId: request.rpcId,
-          result: {
-            ok: true,
-            value: {
-              current: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
-              routable: true,
-              groups: [],
-              failures: [],
-            },
-          },
-        }
-      },
-      async selectModel(request) {
-        return {
-          rpcId: request.rpcId,
-          result: {
-            ok: true,
-            value: {
-              selected: {
-                provider: request.payload.provider,
-                model: request.payload.model,
-                ...request.payload.reasoningEffort === undefined
-                  ? {}
-                  : { reasoningEffort: request.payload.reasoningEffort },
-              },
-            },
-          },
-        }
-      },
       async rename(request) {
         return { rpcId: request.rpcId, result: { ok: true, value: { title: request.payload.title, seq: 0 } } }
       },
@@ -337,23 +306,6 @@ describe('unary round trip (handler ⇄ client, no network)', () => {
       value: { items: [{ sessionId: 's1', snippet: 'fixture match' }], hasMore: false },
     })
     expect((await c.sessions.create({})).result.ok).toBe(true)
-    expect((await c.sessions.models({ sessionId: 's' as never })).result.ok).toBe(true)
-    const selected = await c.sessions.selectModel({
-      sessionId: 's' as never,
-      provider: 'deepseek-official',
-      model: 'deepseek-v4-flash',
-      reasoningEffort: 'max',
-    })
-    expect(selected.result).toMatchObject({
-      ok: true,
-      value: {
-        selected: {
-          provider: 'deepseek-official',
-          model: 'deepseek-v4-flash',
-          reasoningEffort: 'max',
-        },
-      },
-    })
     const renamed = await c.sessions.rename({ sessionId: 's' as never, title: 'named' })
     expect(renamed.result).toMatchObject({ ok: true, value: { title: 'named', seq: 0 } })
     expect((await c.sessions.prompt({ sessionId: 's' as never, mode: 'queue', content: [{ type: 'text', text: 'x' }] })).result.ok).toBe(true)

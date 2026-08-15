@@ -420,6 +420,19 @@ Source: [`packages/feedback/command-feedback/src/index.ts:62`](../packages/feedb
 
 Source: [`packages/goal/goal/src/domain.ts:66`](../packages/goal/goal/src/domain.ts)
 
+### `h-model-routing/*`
+
+<a id="h-model-routingstate--log-only"></a>
+
+#### `h-model-routing/state` — log-only
+
+```ts persistence-catalog
+/** Complete current H-routing plan snapshot, or null when a fresh task clears the prior plan. */
+'h-model-routing/state': HPlanState
+```
+
+Source: [`packages/model-routing/h-model-routing/src/domain.ts:24`](../packages/model-routing/h-model-routing/src/domain.ts)
+
 ### `hook/*`
 
 <a id="hookinvoked--log-only"></a>

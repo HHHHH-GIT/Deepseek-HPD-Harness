@@ -2,10 +2,9 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import AgentRegistry, { agentEvents } from '@deepseek-ai/dsh-agent'
+import AgentRegistry from '@deepseek-ai/dsh-agent'
 import type { Agent, AgentHandle, CreateAgentOptions } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
-import type { LlmCallConfig } from '@deepseek-ai/dsh-llm'
 import SessionStore from '@deepseek-ai/dsh-session'
 import type { Session, SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
@@ -253,7 +252,7 @@ describe('sessions.fork', () => {
     await ctx.fiber.dispose()
   })
 
-  it('installs the latest logged model selection before the child can run', async () => {
+  it('carries the latest logged route into the child through the seeded log', async () => {
     const ctx = await composed()
     const source = liveAgent(ctx, 'session-routed', 1)
     source.append('request/header', {
@@ -271,15 +270,11 @@ describe('sessions.fork', () => {
     if (!response.result.ok) return
     const child = ctx.agents.get(response.result.value.sessionId)
     if (child === undefined) throw new Error('fork did not publish the child agent')
-    const assembly = await child.ctx.systemPrompt.assemble()
-    expect(assembly.variables).toMatchObject({
-      provider: 'inherited-provider',
-      model: 'inherited-model',
-    })
-    const fallback: LlmCallConfig = { provider: 'default-provider', model: 'default-model' }
-    await expect(agentEvents(child.ctx, child).waterfall(
-      'agent/request', { turn: 1, step: 0, signal: new AbortController().signal }, () => Promise.resolve(fallback),
-    )).resolves.toMatchObject({
+    // The fork seed extends the cut through trailing out-of-band events, so the
+    // parent's latest logged request header rides into the child's log and
+    // remains the durable source of the child's route (no session-local
+    // selection layer exists anymore).
+    expect(child.session.requestHeader()?.config).toMatchObject({
       provider: 'inherited-provider',
       model: 'inherited-model',
       reasoningEffort: 'high',

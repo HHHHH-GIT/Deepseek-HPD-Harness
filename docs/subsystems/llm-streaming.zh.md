@@ -111,6 +111,8 @@ type ContextForm =
   | 'relay'
   /** Material lifted out of another session's log, possibly reduced on the way in. */
   | 'recall'
+  /** An internal orchestration directive the model must follow for the current operation, not user-facing content. */
+  | 'directive'
 ```
 
 ```ts type-equiv
@@ -149,6 +151,7 @@ type ContextFormed =
   }
   | { readonly form: 'relay' }
   | { readonly form: 'recall' }
+  | { readonly form: 'directive' }
 ```
 
 <a id="streamchunk--the-raw-protocol"></a>

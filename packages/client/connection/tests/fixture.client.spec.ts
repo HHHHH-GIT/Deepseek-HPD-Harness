@@ -179,35 +179,13 @@ describe('createFixtureApi', () => {
     })
   })
 
-  it('serves grouped models and keeps a selection for later history and fixture requests', async () => {
+  it('serves the grouped model catalog over llm.models', async () => {
     const api = createFixtureApi()
-    const sessionId = sid('fx-alpha')
-    const catalog = await api.sessions.models(req({ sessionId }))
+    const catalog = await api.llm.models(req({}))
     if (!catalog.result.ok) throw new Error('models failed')
     expect(catalog.result.value.groups.map(group => group.name)).toEqual(['DeepSeek', 'OpenAI'])
     expect(catalog.result.value.groups[0]?.models.map(model => model.id))
       .toEqual(['deepseek-v4-flash', 'deepseek-v4-pro'])
-
-    const selected = await api.sessions.selectModel(req({
-      sessionId,
-      provider: 'openai',
-      model: 'gpt-5',
-    }))
-    if (!selected.result.ok) throw new Error('selection failed')
-    expect(selected.result.value.selected).toEqual({ provider: 'openai', model: 'gpt-5' })
-    const history = await api.sessions.history(req({ sessionId }))
-    if (!history.result.ok) throw new Error('history failed')
-
-    const prompt = await api.sessions.prompt(req({
-      sessionId,
-      mode: 'queue',
-      content: [{ type: 'text', text: 'report model' }],
-    }))
-    expect(prompt.result.ok).toBe(true)
-    await new Promise(resolve => setTimeout(resolve, 600))
-    const after = await api.sessions.history(req({ sessionId }))
-    if (!after.result.ok) throw new Error('history failed')
-    expect(JSON.stringify(after.result.value.events)).toContain('openai/gpt-5')
   })
 
   it('serves configured DeepSeek readiness and keeps credential values write-only', async () => {

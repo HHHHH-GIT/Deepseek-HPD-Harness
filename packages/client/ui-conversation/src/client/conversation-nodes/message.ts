@@ -71,6 +71,9 @@ export const messageDefinition: ConversationNodeDefinition<MessageNode> = {
   update: context => context.state,
   buildViewNode: (context) => {
     if (context.state === undefined) return null
+    // Orchestration directives reach the model but never surface as a chat
+    // row: they are internal steering, not conversation content.
+    if (context.state.kind === 'context' && context.state.form === 'directive') return null
     return chatNode(context, context.state.kind, context.state.seq, context.state)
   },
 }

@@ -58,6 +58,8 @@ export type ContextForm =
   | 'relay'
   /** Material lifted out of another session's log, possibly reduced on the way in. */
   | 'recall'
+  /** An internal orchestration directive the model must follow for the current operation, not user-facing content. */
+  | 'directive'
 
 /** One named contribution to a `snapshot`-form context, in assembly order. */
 export interface ContextSnapshotSection {
@@ -92,6 +94,7 @@ export type ContextFormed =
   }
   | { readonly form: 'relay' }
   | { readonly form: 'recall' }
+  | { readonly form: 'directive' }
 
 /**
  * Where a message (or injected content) came from.

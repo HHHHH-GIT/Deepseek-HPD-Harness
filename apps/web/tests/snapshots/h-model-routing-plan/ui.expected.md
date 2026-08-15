@@ -1,0 +1,26 @@
+- banner:
+  - navigation "Session hierarchy":
+    - button "{{workspace}}" [disabled]
+  - img
+  - text: Minimal mode
+  - button "Session log":
+    - text: Session log
+    - img
+  - tablist:
+    - tab "Chat" [selected]
+    - tab "Trajectory"
+- text: Audit the release path and prepare a safe rollout. 7/25 {{clock}}
+- button "Copy":
+  - img
+- region "Complex task plan":
+  - button "Collapse complex task plan" [expanded]: Complex Task Plan Interrupted 1/3 completed
+  - paragraph: TaskAudit the release path and prepare a safe rollout.
+  - list:
+    - listitem: Inspect the release checklist. Completed
+    - listitem: Validate the production rollout. In progress
+    - listitem: Write the handoff summary. Pending
+- textbox "Message the agent"
+- button "Commands":
+  - img
+- 'button "Access mode, current: Workspace Write"': Workspace Write
+- button "Send message" [disabled]

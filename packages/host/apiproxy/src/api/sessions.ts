@@ -88,16 +88,6 @@ export type PromptContentPart =
   | { type: 'text'; text: string }
   | { type: 'image'; mediaType: ImageMediaType; data: string; name?: string }
 
-/** Complete model selection for one session. */
-export interface ModelSelection {
-  /** Registered provider route. */
-  provider: string
-  /** Provider-owned model id. */
-  model: string
-  /** Adapter-owned reasoning effort; absence preserves adapter/provider default behavior. */
-  reasoningEffort?: string
-}
-
 /** One adapter-owned reasoning effort displayed for an exact model route. */
 export interface ModelReasoningEffort {
   /** Opaque value submitted back to the owning adapter. */
@@ -146,25 +136,6 @@ export interface ModelCatalogFailure {
   name: string
   /** Lookup failure diagnostic. */
   message: string
-}
-
-/** Detached model-directory snapshot for one session. */
-export interface SessionModels {
-  /** Model selection for the session's next assembled step. */
-  current: ModelSelection
-  /**
-   * Whether an adapter currently serves `current.provider`, and therefore
-   * whether this session can start a turn at all. Deliberately NOT derivable
-   * from `groups`: catalog membership is advisory, so a route serving a model
-   * it stopped advertising is absent from the groups yet perfectly usable,
-   * while a route whose adapter is gone can serve nothing. A surface that
-   * blocks input must read this rather than the groups.
-   */
-  routable: boolean
-  /** Successfully loaded provider groups. */
-  groups: ModelProviderGroup[]
-  /** Provider-local failures; successful groups remain usable. */
-  failures: ModelCatalogFailure[]
 }
 
 /** A client-requested mutation of one still-pending queue item. */
@@ -281,25 +252,6 @@ export interface SessionsApi {
    */
   history(request: RpcRequest<{ sessionId: SessionId; beforeSeq?: number; maxMessages?: number }>):
   Promise<RpcResponse<{ events: HistoryEntry[]; hasMore: boolean; projections?: SessionProjectionsBlock }>>
-
-  /**
-   * Reads a fresh advisory model directory for an ordinary session. Provider
-   * lookups run independently; subagents reject with `agent-busy`.
-   */
-  models(request: RpcRequest<{ sessionId: SessionId }>): Promise<RpcResponse<SessionModels>>
-
-  /**
-   * Selects the complete model selection for this session. Exact model metadata
-   * validates an optional reasoning effort, while catalog membership remains
-   * advisory. Session-backed subagents reject with `agent-busy`.
-   */
-  selectModel(request: RpcRequest<{
-    sessionId: SessionId
-    provider: string
-    model: string
-    reasoningEffort?: string
-  }>):
-  Promise<RpcResponse<{ selected: ModelSelection }>>
 
   /**
    * Renames a session: appends a `session/title` event with the `user`

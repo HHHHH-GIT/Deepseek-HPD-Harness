@@ -579,6 +579,10 @@ export function contextBody(
       return recalledSessions(props.source) === null
         ? opaque
         : { rendered: 'recall', summary: null, body: <RecallBody {...props} /> }
+    case 'directive':
+      // Directives are dropped before rendering (see conversation-nodes/message.ts);
+      // this arm only keeps the KnownContextForm switch exhaustive.
+      return opaque
     case null:
       return opaque
     /* v8 ignore next 4 -- closed-union backstop; the compiler rejects a new

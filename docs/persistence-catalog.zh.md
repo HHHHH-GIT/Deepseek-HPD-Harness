@@ -422,6 +422,19 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 来源：[`packages/goal/goal/src/domain.ts:66`](../packages/goal/goal/src/domain.ts)
 
+### `h-model-routing/*`
+
+<a id="h-model-routingstate--log-only"></a>
+
+#### `h-model-routing/state` — log-only
+
+```ts persistence-catalog
+/** Complete current H-routing plan snapshot, or null when a fresh task clears the prior plan. */
+'h-model-routing/state': HPlanState
+```
+
+来源：[`packages/model-routing/h-model-routing/src/domain.ts:24`](../packages/model-routing/h-model-routing/src/domain.ts)
+
 ### `hook/*`
 
 <a id="hookinvoked--log-only"></a>

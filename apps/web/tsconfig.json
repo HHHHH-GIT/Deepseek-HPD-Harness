@@ -62,6 +62,7 @@
     "tests/math-rendering.e2e.ts",
     "tests/markdown-cjk-strong.e2e.ts",
     "tests/markdown-inline-code-links.e2e.ts",
+    "tests/h-model-routing-plan.e2e.ts",
     "tests/queue-actions.e2e.ts",
     "tests/skill-invocation-policy.e2e.ts",
     "tests/skill-user-invoke.e2e.ts",

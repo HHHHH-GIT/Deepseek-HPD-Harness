@@ -8,10 +8,9 @@ import { z } from 'zod'
 import {
   contentBlockSchema, sessionCancelRequestSchema, sessionCancelValueSchema, sessionCreateRequestSchema,
   sessionCreateValueSchema, sessionEventSchema, sessionHistoryRequestSchema, sessionHistoryValueSchema,
-  sessionIdSchema, sessionListRequestSchema, sessionListValueSchema, sessionModelsRequestSchema,
-  sessionModelsValueSchema, sessionPromptRequestSchema, sessionPromptValueSchema,
-  sessionSearchRequestSchema, sessionSearchValueSchema, sessionSelectModelRequestSchema,
-  sessionSelectModelValueSchema, sessionSummarySchema,
+  sessionIdSchema, sessionListRequestSchema, sessionListValueSchema,
+  sessionPromptRequestSchema, sessionPromptValueSchema,
+  sessionSearchRequestSchema, sessionSearchValueSchema, sessionSummarySchema,
   sessionUpdateQueueRequestSchema, sessionUpdateQueueValueSchema,
 } from '../src/api/sessions.schema.ts'
 import {
@@ -203,57 +202,6 @@ describe('sessions domain schemas', () => {
       hasMore: false,
       modelSelection: { provider: 'deepseek-official', model: 'deepseek-v4-flash' },
     }).hasMore).toBe(false)
-    expect(sessionModelsRequestSchema.parse({ sessionId: 's1' }).sessionId).toBe('s1')
-    expect(sessionModelsValueSchema.parse({
-      current: { provider: 'deepseek-official', model: 'deepseek-v4-flash', reasoningEffort: 'max' },
-      routable: true,
-      groups: [{
-        id: 'deepseek-official',
-        name: 'DeepSeek',
-        models: [{
-          id: 'deepseek-v4-flash',
-          name: 'DeepSeek V4 Flash',
-          description: 'fast',
-          reasoning: {
-            efforts: [
-              { id: 'off', name: 'Off' },
-              { id: 'max', name: 'Max', description: 'Largest budget' },
-            ],
-            defaultEffort: 'off',
-          },
-        }],
-      }],
-      failures: [{ id: 'broken', name: 'Broken', message: 'offline' }],
-    }).groups[0]?.models[0]?.id).toBe('deepseek-v4-flash')
-    expect(sessionSelectModelRequestSchema.parse({
-      sessionId: 's1',
-      provider: 'deepseek-official',
-      model: 'deepseek-v4-pro',
-      reasoningEffort: 'max',
-    }).reasoningEffort).toBe('max')
-    expect(sessionSelectModelValueSchema.parse({
-      selected: { provider: 'deepseek-official', model: 'deepseek-v4-pro', reasoningEffort: 'max' },
-    }).selected.reasoningEffort).toBe('max')
-    expect(() => sessionSelectModelRequestSchema.parse({
-      sessionId: 's1',
-      provider: '',
-      model: 'm',
-    })).toThrow()
-    expect(() => sessionSelectModelRequestSchema.parse({
-      sessionId: 's1',
-      provider: 'deepseek-official',
-      model: 'm',
-      reasoningEffort: '',
-    })).toThrow()
-    expect(() => sessionModelsValueSchema.parse({
-      current: { provider: 'deepseek-official', model: 'm' },
-      groups: [{
-        id: 'deepseek-official',
-        name: 'DeepSeek',
-        models: [{ id: 'm', name: 'M', reasoning: { efforts: [] } }],
-      }],
-      failures: [],
-    })).toThrow()
     const prompt = sessionPromptRequestSchema.parse({
       sessionId: 's1',
       mode: 'queue',

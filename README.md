@@ -1,48 +1,45 @@
-# DeepSeek Harness
+# DeepSeek HPD Harness
 
 English | [中文](README.zh.md)
 
-DeepSeek Harness (`dsh`) is an open-source agent harness developed by [DeepSeek AI](https://deepseek.com).
+DeepSeek HPD Harness is an open-source agent harness derived from DeepSeek Harness (`dsh`), built to bring the HPD workflow architecture to agent systems.
 
-It uses an architecture where **everything is a plugin**, and is powered by [Cordis](https://github.com/cordiverse/cordis), whose design is described in [_A Programming Paradigm for Spatiotemporal Composability_](https://github.com/cordiverse/paper).
+HPD means **Hierarchical · Parallel · Dynamic**: classify work before choosing its execution path, schedule independent planned work in parallel, and adapt later decisions to execution results and quality signals. H is available now; P and D are in development.
 
-## Developer preview
+The harness uses an architecture where **everything is a plugin**, and is powered by [Cordis](https://github.com/cordiverse/cordis), whose design is described in [_A Programming Paradigm for Spatiotemporal Composability_](https://github.com/cordiverse/paper).
 
-DeepSeek Harness is currently in _developer preview_ and is iterating rapidly. **THERE WILL BE COMPATIBILITY-BREAKING CHANGES.**
+## HPD architecture
+
+DSH is evolving toward HPD: **Hierarchical · Parallel · Dynamic**, a workflow architecture that puts compute where it improves the result. [Read the HPD theory (Chinese)](https://mp.weixin.qq.com/s/v2Sjuuc0aEk1Pmwxd124hA).
+
+| Dimension | Status | What it means |
+| --- | --- | --- |
+| H — Hierarchical | Available | Classifies each task by complexity: simple work goes directly to a Light model, while complex work enters an Expert planning and execution path. |
+| P — Parallel | In development | Will schedule independent planned work in parallel from a task DAG, reducing wall-clock time without violating dependencies. |
+| D — Dynamic | In development | Will use execution results, quality checks, and tool feedback to review, re-plan, and choose the next action. |
+
+H is the first shipped HPD dimension. It executes an accepted plan in order today; P and D are under active development.
+
+## What the H upgrade changes
+
+H turns the default single-path agent run into a visible, complexity-aware workflow. It keeps direct work direct and adds a controlled planning path only when a task needs it.
+
+| Without H routing | With H routing | User benefit |
+| --- | --- | --- |
+| One configured agent route handles every request. | A level-1 assessment sends simple requests to Light and reserves Expert planning for complex work. | Avoids planning and Expert-model overhead for small requests. |
+| Planning can occur inside an ordinary, tool-enabled agent step. | The Planner is an isolated Expert request with no tools and no assistant step; it must produce the plan before subtask execution starts. | The Planner cannot complete the original task before showing the work to be done. |
+| Progress depends on optional generic Todo state and may appear late or not at all. | Durable plan snapshots publish `planning`, ordered subtasks, active work, summary, completion, failure, and interruption to the H plan panel. | The plan appears immediately after complex routing, then each subtask advances in order. |
+| Failure and cancellation leave only the normal transcript to inspect. | Planner failures show a clear state before an Expert direct-answer fallback; interrupted plans preserve their completed work and never auto-resume. | Clearer recovery without silently repeating side effects. |
 
 ## Run
 
-### Run from `npm`
-
-Install `Node.js`, then run:
-
 ```sh
-npx @deepseek-ai/dsh web
-```
-
-The command starts the Web UI, served at `http://127.0.0.1:3080` by default. See [Web UI guide](docs/user/guide/index.md).
-
-### Run from source
-
-To run from a repository checkout:
-
-```sh
-git clone https://github.com/deepseek-ai/deepseek-harness.git
-cd deepseek-harness
+git clone https://github.com/HHHHH-GIT/Deepseek-HPD-Harness.git
+cd Deepseek-HPD-Harness
 pnpm install
 pnpm run build
 pnpm dsh web
 ```
-
-## Community and support
-
-- Feel free to submit feedback or bug reports through [GitHub Discussions](https://github.com/deepseek-ai/deepseek-harness/discussions).
-- Add the [`dsh-plugin`](https://github.com/topics/dsh-plugin) topic to your plugin repository for discoverability.
-- Join <a href="https://discord.gg/Ycq5dCaS4">DeepSeek Harness Discord community</a>.
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Development
 

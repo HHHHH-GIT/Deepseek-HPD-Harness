@@ -142,6 +142,15 @@
     - id: client-hmr
       name: '@deepseek-ai/dsh-client-hmr'
 
+    # First-version hierarchical model routing: an out-of-loop policy over the
+    # agent loop's extension points, reading the h-model-routing settings
+    # namespace. Host-plane on purpose: it must observe every root agent the
+    # surface creates, including preset-composed sessions.
+    - id: h-model-routing
+      name: '@deepseek-ai/dsh-h-model-routing'
+      config:
+        emitTodoMirror: false
+
     # ── browser plugin roster (dsh.client rows; node halves are layer-2 hosts) ──
 
     # Dual-face: the node half scans this tree, composes window.__DSH_BOOT__,
@@ -192,11 +201,18 @@
     - id: ui-settings-models
       name: '@deepseek-ai/dsh-client-ui-settings-models'
 
+    # Model Routing settings page: the Light/Expert bindings over llm.models.
+    - id: ui-settings-model-routing
+      name: '@deepseek-ai/dsh-client-ui-settings-model-routing'
+
     - id: ui-settings-plugin-inventory
       name: '@deepseek-ai/dsh-client-ui-settings-plugin-inventory'
 
     - id: ui-conversation
       name: '@deepseek-ai/dsh-client-ui-conversation'
+
+    - id: ui-h-model-routing
+      name: '@deepseek-ai/dsh-client-ui-h-model-routing'
 
     # Tool call tree, generic fallback, and keyed business Tool views.
     - id: ui-tool
@@ -245,10 +261,6 @@
     # assistant-message action strip, over the messageFeedback Remote.
     - id: ui-message-feedback
       name: '@deepseek-ai/dsh-client-ui-message-feedback'
-
-    # Model selection: the /model popupSelect + composer seat over session.models.
-    - id: ui-model-selection
-      name: '@deepseek-ai/dsh-client-ui-model-selection'
 
     - id: ui-permission
       name: '@deepseek-ai/dsh-client-ui-permission-presets'
