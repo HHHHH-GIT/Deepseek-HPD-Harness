@@ -150,6 +150,8 @@
       name: '@deepseek-ai/dsh-h-model-routing'
       config:
         emitTodoMirror: false
+        maxConcurrentSubtasks: 3
+        subagentProvider: spawn
 
     # ── browser plugin roster (dsh.client rows; node halves are layer-2 hosts) ──
 

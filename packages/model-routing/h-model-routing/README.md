@@ -2,17 +2,18 @@
 
 English | [中文](README.zh.md)
 
-Hierarchical model routing for DSH. The plugin classifies each root-agent task and selects the configured Light or Expert model without changing the agent-loop driver.
+H routing classifies root-agent tasks into Light and Expert work. Complex work becomes a durable directed acyclic graph (DAG): P runs every ready node in an isolated subagent, up to the configured concurrency limit, then the root agent makes one Expert-model summary request that can reuse the Planner's model prefix. The agent-loop driver remains unchanged.
 
 ## Behavior
 
-- A level-1 Expert assessment classifies a new user task as SIMPLE or COMPLEX. SIMPLE tasks run on the Light model.
-- After a COMPLEX verdict, the plugin records a durable `planning` snapshot before making a standalone Expert planner request. The planner has no tool schemas and is not an agent-loop step.
-- A valid numbered plan becomes an `executing` snapshot with its first subtask `in_progress` before any subtask model request. Each subtask receives a level-2 Light assessment and runs sequentially on the selected tier.
-- Each completion records a replacement snapshot before the next `agent.steer`. The plugin records `summarizing` before the Light-model summary and `completed` after it finishes.
-- `h-model-routing/state` is the durable source for the `hModelRouting` session projection. The Web composition renders it in the H plan dock; the generic Todo projection is optional.
+- Level 1 uses the Expert route to classify a user task. SIMPLE work enters one Light-model request.
+- For COMPLEX work, H writes `planning`, then turns the root agent's first Expert step into the Planner. Its normal reasoning stream and final response appear in the main conversation. The final response must be strict JSON with 2-8 topologically ordered tasks; each task has an `id`, a display `title` of at most 48 characters, a self-contained `instruction`, and `dependsOn` task ids.
+- P writes the complete `executing` snapshot before starting ready nodes. One level-2 Light request selects both the Light or Expert `route` and a `spec`, `react`, or `weak` work style. H records both before starting an isolated one-shot subagent with its assigned task and completed dependency results. The selected style supplies that child alone with a scoped persona.
+- At most `maxConcurrentSubtasks` nodes classify and run at once. A node starts only after every dependency completes. A failed node does not stop independent work; its pending descendants become `blocked`.
+- When every node is terminal, H records `summarizing`, injects the successful results, failures, and blocked work into one Expert-model summary request, then records `completed`. Keeping Planner and summary on the same route preserves the reusable root prefix instead of warming a second model with the complete conversation.
+- `h-model-routing/state` is the durable source of the `hModelRouting` projection. Snapshots contain the immutable DAG, selected route and work style, and the `pending`, `in_progress`, `completed`, `failed`, or `blocked` node state. Web renders this projection and keeps the generic Todo mirror disabled by default.
 
-The plugin listens on `agent/pre-step`, `agent/request`, and `agent/turn-stopping` for root agents only. It uses `agent.steer` at turn boundaries and does not route subagent children.
+Only root agents are routed. The Planner is part of that root flow, not a subagent. Isolated execution subagents have independent sessions, full tool loops, cancellation, and audit logs; their `origin: subagent` sessions do not recursively enter H routing.
 
 ## Settings
 
@@ -22,93 +23,55 @@ The plugin registers the `h-model-routing` settings namespace.
 | --- | --- |
 | `light` | `{ provider, model, reasoningEffort }`, one concrete Light model binding. |
 | `expert` | `{ provider, model, reasoningEffort }`, one concrete Expert model binding. |
-| `reasoningEffortMode` | `auto` does not force an effort; `manual` applies each tier's `reasoningEffort`. |
+| `reasoningEffortMode` | `auto` leaves effort to the adapter; `manual` applies each tier's `reasoningEffort` to root-agent requests. |
 
-An empty `provider` or `model` disables that tier and leaves the default request route unchanged. Manual reasoning efforts are checked against the selected model; an unsupported effort is omitted.
+An empty `provider` or `model` leaves that root request on its default route. Manual reasoning efforts are checked against the selected model and omitted when unsupported. The subagent seam currently accepts a provider and model, so a child uses its selected route without a separate reasoning-effort override.
 
-## Failure And Interruption
-
-- A failed level-1 assessment leaves the task on its default route. A failed level-2 assessment selects the Expert tier for that subtask.
-- A failed or unparseable planner records `failed`, then the Expert model directly completes the original task. The plugin creates no synthetic subtask and does not add a summary step.
-- A non-completed `turn/end` for a live plan folds its durable state to `interrupted`. This includes cancellation, errors, and cold session repair; interrupted work never resumes automatically.
-- A fresh user task clears the previous H plan before its level-1 assessment. Completed, failed, and interrupted plans otherwise remain visible.
-
-## Installation
-
-Add the host plugin to a composition. The Web bundle includes this row and its client presentation plugin.
+## Configuration
 
 ```yaml
 - id: h-model-routing
   name: '@deepseek-ai/dsh-h-model-routing'
   config:
     emitTodoMirror: false
+    maxConcurrentSubtasks: 3
+    subagentProvider: spawn
+    behavior:
+      enabled: true
+      personas:
+        spec: 'You are a careful software engineer. Inspect before changing.'
+        react: 'You are a hands-on software engineer. Produce and verify.'
+        weak: 'You are a software engineer completing one focused task.'
 ```
 
-## Configuration
+`emitTodoMirror` writes compatibility `todo/write` snapshots and defaults to `false`. `maxConcurrentSubtasks` is an integer from 1 through 8 and defaults to 3. `subagentProvider` names the registered one-shot provider and defaults to `spawn`; the Web bundle uses the isolated in-process spawn provider. `behavior.enabled` defaults to `true`; its three persona texts are deployment-owned and an empty text preserves the child's composed persona for that style. A selected behavior requires a provider with the `persona` capability.
 
-`emitTodoMirror` controls compatibility writes to `todo/write`. It defaults to `false`; Web keeps it disabled because `hModelRouting` is the single visible plan. A non-Web composition that still consumes the shared Todo projection can explicitly set it to `true`.
+## Failure And Interruption
+
+- A failed level-1 assessment leaves the task on its default route. A failed level-2 assessment selects the Expert route for that node.
+- An invalid or failed Planner response records `failed`, then one Expert request directly completes the original task. H creates neither a synthetic node nor a summary request. Planning has no plugin deadline; users can cancel the root turn through the normal agent control.
+- Cancellation, root-agent failure, and plugin unload stop new DAG admission, cancel and drain published subagents, and publish no late progress snapshots. A non-completed `turn/end` projects any live plan as `interrupted`; cold replay preserves that state and never resumes it.
+- A new user task clears the prior H plan before level-1 assessment. Completed, failed, and interrupted plans remain visible until then.
 
 ## Model Experience
 
-### Routing Requests And Steered Steps
+### Routing And DAG Execution
 
 #### What the model sees
 
-Level-1 and level-2 assessments are independent classifier requests. For complex work, the standalone planner receives `plannerPrompt(task)` on the Expert model with no tools and produces no assistant step. The plugin records `planning`, the accepted ordered plan, and each visible progress transition as `h-model-routing/state` snapshots. The first subtask instruction is injected at the admitting pre-step; later instructions and the final summary are injected through `agent.steer`. Each execution request receives only its current subtask instruction, and the summary receives the collected subtask results. Planner failure instead injects `directPrompt(task)` for one Expert completion.
-
-##### Planner instruction
-
-```markdown
-Act as a planner. Break the following task into a numbered list of 2 to 8 subtasks.
-Each subtask must be self-contained and independently executable in order.
-Output ONLY the numbered list, one subtask per line, with no other text.
-Do not call todo_write for this work; the subtask list is managed automatically.
-
-Task:
-<task>
-```
-
-##### Subtask instruction
-
-```markdown
-Subtask <index>/<count>:
-<text>
-
-Complete ONLY this subtask now and report the result concisely. Do not work on other subtasks — each remaining subtask is steered separately.
-```
-
-##### Direct fallback instruction
-
-```markdown
-Complete the following task directly and comprehensively now.
-
-Task:
-<task>
-```
-
-##### Summary instruction
-
-```markdown
-All subtasks of the original task are complete. Combine the subtask results below into ONE final answer
-for the original task. Write ONLY the final answer — do not recap, enumerate, or repeat the subtasks or their completion status.
-
-Original task:
-<task>
-
-Subtask results:
-<subtask results>
-```
+The level-1 and level-2 classifiers are standalone routing requests. The Planner is a no-tools root-agent step: it sees the original task, streams reasoning through normal `assistant/chunk` events, and writes its final DAG JSON as an `assistant/message`. Each child sees the original task, exactly one DAG node, completed dependencies, and its selected work-style persona. After settlement, the same root conversation receives one final Expert summary directive, including partial-result limitations. Root instructions, Planner output, selected node routes and behaviors, and `h-model-routing/state` are durable; child work belongs to the isolated child sessions.
 
 #### Token effect
 
-A SIMPLE task adds one independent classifier request. A COMPLEX task adds the level-1 classifier, one standalone planner request, one level-2 classifier per subtask, one execution step per subtask, and one summary step. Planner failure replaces the execution and summary chain with one direct Expert step.
+A SIMPLE task adds one classifier request. A valid complex plan adds one planner request, one classifier and one child-agent turn per started node, plus one root summary request.
 
 #### KV Cache effect
 
-Classifier and planner requests are independent from the ongoing conversation. Steered subtask and summary instructions extend the current turn, so their normal model requests retain the conversation prefix and do not open a new session.
+Classifier calls have no conversation prefix. Planner and summary use the same Expert route in one root turn, so the summary extends a cache-compatible copy of the Planner request's complete message prefix. Each child keeps one selected persona for its complete isolated run; sibling behavior choices therefore do not mutate a live root or child prefix. Child agents remain independent but begin with the same assembled system prefix, allowing provider prefix caching without mixing their task histories.
 
 ## Known Limitations and Deferred Work
 
-- **Sequential execution only** — the fixed plan has no parallel scheduler, reviewer, or dynamic re-planning.
-- **No automatic resume** — an interrupted plan preserves its last known progress but requires a new user task to continue work.
-- **Projection-dependent presentation** — the durable event is available wherever the plugin is composed; the H plan panel requires a client composition with the session-projection transport.
+- **Planner-declared ordering** - P trusts the DAG to serialize shared mutable files and external side effects; it does not detect runtime conflicts.
+- **No automatic resume** - interrupted work keeps its last progress for inspection and never resumes without a new user task.
+- **Provider effort gap** - the subagent start API does not yet expose a child reasoning-effort option.
+- **Generic default personas** - deployments serving materially different model families should replace the configured `behavior.personas` after measuring those models on their own maintenance and build tasks.

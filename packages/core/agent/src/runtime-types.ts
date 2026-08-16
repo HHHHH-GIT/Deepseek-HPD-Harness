@@ -12,7 +12,7 @@ import type { AgentCancelCause, Session, SessionId, UserMessage } from '@deepsee
 export type { AgentCancelCause } from '@deepseek-ai/dsh-session'
 import type { Inbox } from './inbox.ts'
 import type { InboxTarget } from './types.ts'
-import type {} from '@deepseek-ai/dsh-system-prompt'
+import type { PromptAssembly } from '@deepseek-ai/dsh-system-prompt'
 declare module '@deepseek-ai/dsh-system-prompt' {
   interface AssembleContext {
     /** Agent for this assembly; absent on diagnostics. When present, `scope` must identify the same agent. */
@@ -49,10 +49,15 @@ export interface CancelOptions {
  */
 export type AgentStatus = 'idle' | 'running'
 
-/** Whether and with which messages the loop enters a proposed step. */
+/** Whether and with which messages and prompt assembly the loop enters a proposed step. */
 export type PreStepDecision =
   | { kind: 'reject' }
-  | { kind: 'enter'; messages: UserMessage[] }
+  | {
+    kind: 'enter'
+    messages: UserMessage[]
+    /** Replacement for the assembly prepared before interception; omission preserves that assembly. */
+    assembly?: PromptAssembly
+  }
 
 /** Action returned by a listener that owns model-request recovery. */
 export type RequestErrorAction = { kind: 'retry' } | undefined
@@ -218,17 +223,18 @@ declare module '@deepseek-ai/cordis' {
 
     // ---- the machine's extension points ----
     /**
-     * Reject a proposed step or replace the messages that enter it. Calling
-     * `next()` preserves the current messages.
+     * Reject a proposed step or replace the messages or prompt assembly that
+     * enter it. Calling `next()` preserves the current values.
      * @param payload.agent - the agent proposing the step.
      * @param payload.messages - messages removed from the inbox for this step.
+     * @param payload.assembly - prompt sections, contexts, and tool schemas prepared for this step.
      * @param payload.turn - the turn that will own the step.
      * @param payload.step - the step proposed by the loop.
      * @param payload.signal - the current turn's cancellation signal.
      * Scope-filtered dispatch (`@deepseek-ai/dsh-scope`): agent-scoped listeners receive only that agent.
      * @mode waterfall
      */
-    'agent/pre-step'(this: Scoped<Agent>, payload: { agent: Agent; messages: UserMessage[]; turn: number; step: number; signal: AbortSignal }, next: () => Promise<PreStepDecision>): Promise<PreStepDecision>
+    'agent/pre-step'(this: Scoped<Agent>, payload: { agent: Agent; messages: UserMessage[]; assembly: PromptAssembly; turn: number; step: number; signal: AbortSignal }, next: () => Promise<PreStepDecision>): Promise<PreStepDecision>
     /**
      * Replace the frozen call configuration. `await next()` yields the config
      * the machine would use (agent options on the first request, the logged

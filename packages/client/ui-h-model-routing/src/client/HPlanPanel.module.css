@@ -184,6 +184,14 @@
   color: var(--dsw-alias-state-business-primary);
 }
 
+.subtaskIcon[data-status='failed'] {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.subtaskIcon[data-status='blocked'] {
+  color: var(--dsw-alias-label-caption);
+}
+
 .pendingMark {
   box-sizing: border-box;
   width: 10px;
@@ -205,12 +213,168 @@
   line-height: 20px;
 }
 
+.subtaskMeta {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}
+
+.subtaskRoute {
+  min-width: 42px;
+  padding: 0 5px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 4px;
+  background: var(--dsw-alias-fill-l1);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+
+.subtaskBehavior {
+  min-width: 38px;
+  padding: 0 5px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 4px;
+  background: var(--dsw-alias-fill-l1);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+}
+
+.subtaskBehavior[data-behavior='spec'] {
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.subtaskBehavior[data-behavior='react'] {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.subtaskRoute[data-route='light'] {
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.subtaskRoute[data-route='expert'] {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+}
+
 .subtask[data-status='completed'] .subtaskStatus {
   color: var(--dsw-alias-state-success-primary);
 }
 
 .subtask[data-status='in_progress'] .subtaskStatus {
   color: var(--dsw-alias-state-business-primary);
+}
+
+.subtask[data-status='failed'] .subtaskStatus {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.viewSwitch {
+  display: inline-flex;
+  align-self: flex-end;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.viewButton {
+  display: grid;
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  place-items: center;
+}
+
+.viewButton + .viewButton {
+  border-left: 1px solid var(--dsw-alias-border-l1);
+}
+
+.viewButton[data-active='true'] {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.viewButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: -2px;
+}
+
+.graphViewport {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.graphCanvas {
+  position: relative;
+}
+
+.graph {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+
+.graphEdge {
+  stroke: var(--dsw-alias-border-l2);
+  stroke-width: 1.5px;
+}
+
+.graphArrow {
+  fill: var(--dsw-alias-border-l2);
+}
+
+.graphNode {
+  position: absolute;
+  box-sizing: border-box;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1.5px solid var(--dsw-alias-border-l2);
+  border-radius: 50%;
+  background: var(--dsw-alias-fill-l1);
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.graphNode[data-navigable='true'] {
+  cursor: pointer;
+}
+
+.graphNode:hover,
+.graphNode:focus-visible {
+  border-width: 3px;
+  outline: none;
+}
+
+.graphNode[data-status='in_progress'] {
+  border-color: var(--dsw-alias-state-business-primary);
+  background: var(--dsw-alias-state-business-primary);
+}
+
+.graphNode[data-status='completed'] {
+  border-color: var(--dsw-alias-state-success-primary);
+  background: var(--dsw-alias-state-success-primary);
+}
+
+.graphNode[data-status='failed'] {
+  border-color: var(--dsw-alias-state-error-primary);
+  background: var(--dsw-alias-state-error-primary);
+}
+
+.graphNode[data-status='in_progress'],
+.graphNode[data-status='completed'],
+.graphNode[data-status='failed'] {
+  color: var(--dsw-alias-fill-l1);
 }
 
 @keyframes h-plan-progress-spin {

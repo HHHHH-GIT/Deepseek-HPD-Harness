@@ -1,11 +1,8 @@
 /**
- * First-version hierarchical model routing: complexity-gated light/expert
- * routing implemented as an OUT-OF-LOOP policy over the agent loop's
- * extension points (\`agent/pre-step\`, \`agent/request\`,
- * \`agent/turn-stopping\`). The ReactLoopAgent driver is never touched;
- * classifiers and planner are independent model calls, while the accepted plan
- * and every progress transition are durable `h-model-routing/state` snapshots.
- * Process-local state only carries in-flight result text and next-step routing.
+ * Hierarchical model routing with a durable DAG plan and bounded parallel
+ * subagent execution. The agent-loop driver stays unchanged: classification
+ * is a standalone call, while planning and summary are visible root-agent
+ * steps around the isolated worker lifecycle.
  * @module @deepseek-ai/dsh-h-model-routing
  */
 
@@ -15,31 +12,36 @@ import z from '@deepseek-ai/schemastery'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import type { LlmCallConfig } from '@deepseek-ai/dsh-llm'
 import { BlockAssembler, createUserMessage, LlmError, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
-import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
-import type { Session, SessionId, TodoItem, UserMessage } from '@deepseek-ai/dsh-session'
+import type { ContentBlock, GenerateOptions } from '@deepseek-ai/dsh-llm'
+import type { SessionId, TodoItem, UserMessage } from '@deepseek-ai/dsh-session'
+import type { SubagentRun, SubagentResult } from '@deepseek-ai/dsh-subagent'
 import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
-// Type-only: merges ctx.get('agentDefaultModel') onto the Context service map.
+import type { PromptAssembly } from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
-// Type-only: resolves ctx.sessionProjections for the optional projection unit.
 import type {} from '@deepseek-ai/dsh-session-projection'
+import type {} from '@deepseek-ai/dsh-subagent'
 import {
   CLASSIFY_SYSTEM,
+  SUBTASK_ROUTING_SYSTEM,
   classifyPrompt,
   directPrompt,
   parseComplexity,
+  parseSubtaskRouting,
   parseSubtasks,
   plannerPrompt,
+  subtaskRoutingPrompt,
   subtaskPrompt,
   summaryPrompt,
 } from './prompts.ts'
-import { createHState, resetHState } from './state.ts'
-import type { HState, HRouteKind } from './state.ts'
+import type { HDependencyResult, HSubtaskRoutingDecision } from './prompts.ts'
 import { HPlanId } from './domain.ts'
 import { hModelRoutingProjectionDefinition } from './projection.ts'
-import type { HPlanPhase, HPlanProjection, HPlanSubtaskStatus } from './types.ts'
+import { createHState, resetHState } from './state.ts'
+import type { HRouteKind, HState, HSubtask } from './state.ts'
+import type { HPlanPhase, HPlanProjection, HPlanSubtaskBehavior, HPlanSubtaskStatus, HPlanTask } from './types.ts'
 
-export { CLASSIFY_SYSTEM, classifyPrompt, directPrompt, parseComplexity, parseSubtasks, plannerPrompt, subtaskPrompt, summaryPrompt } from './prompts.ts'
-export type { HSubtaskSummary } from './prompts.ts'
+export { CLASSIFY_SYSTEM, SUBTASK_ROUTING_SYSTEM, classifyPrompt, directPrompt, parseComplexity, parseSubtaskRouting, parseSubtasks, plannerPrompt, subtaskRoutingPrompt, subtaskPrompt, summaryPrompt } from './prompts.ts'
+export type { HDependencyResult, HSubtaskRoutingDecision, HSubtaskSummary } from './prompts.ts'
 export { createHState, resetHState } from './state.ts'
 export type { HState, HPhase, HRouteKind, HSubtask } from './state.ts'
 export type * from './types.ts'
@@ -48,7 +50,7 @@ export type { HPlanState } from './domain.ts'
 /** Cordis function-plugin name. */
 export const name = 'h-model-routing'
 /** Services required before the routing listeners may attach. */
-export const inject = ['agents', 'llm']
+export const inject = ['agents', 'llm', 'subagents']
 
 /** Settings namespace carrying the user's light/expert configuration. */
 export const H_MODEL_ROUTING_SETTINGS_NAMESPACE = settingsNamespace('h-model-routing')
@@ -63,7 +65,7 @@ export interface ModelRouteConfig {
   reasoningEffort: string
 }
 
-/** The user-owned settings section of the first-version H routing. */
+/** The user-owned settings section of the hierarchical router. */
 export interface HModelRoutingSettings {
   light: ModelRouteConfig
   expert: ModelRouteConfig
@@ -71,247 +73,228 @@ export interface HModelRoutingSettings {
   reasoningEffortMode: 'auto' | 'manual'
 }
 
+/** Deployment-owned personas selected for admitted DAG nodes. */
+export interface HBehaviorPersonas {
+  /** Inspect-first work style for maintenance and diagnosis. */
+  spec: string
+  /** Produce-verify work style for independent implementation. */
+  react: string
+  /** Task-directed fallback when no stable style is clear. */
+  weak: string
+}
+
+/** Optional behavior-routing controls for isolated DAG workers. */
+export interface HBehaviorRoutingConfig {
+  /** Whether level-2 routing also selects and applies a worker persona. */
+  enabled: boolean
+  /** Persona text selected by the level-2 work-style verdict. An empty value leaves that style unmodified. */
+  personas: HBehaviorPersonas
+}
+
 /** Schemastery schema of the settings section. */
 export const H_MODEL_ROUTING_SETTINGS_SCHEMA: z<HModelRoutingSettings> = z.object({
-  light: z.object({
-    provider: z.string().required(),
-    model: z.string().required(),
-    reasoningEffort: z.string(),
-  }),
-  expert: z.object({
-    provider: z.string().required(),
-    model: z.string().required(),
-    reasoningEffort: z.string(),
-  }),
+  light: z.object({ provider: z.string().required(), model: z.string().required(), reasoningEffort: z.string() }),
+  expert: z.object({ provider: z.string().required(), model: z.string().required(), reasoningEffort: z.string() }),
   reasoningEffortMode: z.union(['auto', 'manual'] as const).default('auto'),
 })
 
-/** Deployment-owned routing presentation options. */
+/** Deployment-owned routing and parallel-scheduling options. */
 export interface Config {
   /** Whether H plan snapshots also write the legacy shared todo projection. */
   emitTodoMirror: boolean
+  /** Maximum ready DAG nodes that may classify and run concurrently. */
+  maxConcurrentSubtasks: number
+  /** Registered one-shot subagent provider for isolated DAG workers. */
+  subagentProvider: string
+  /** Optional behavior-routing controls for isolated DAG workers. */
+  behavior?: HBehaviorRoutingConfig
 }
-export const Config: z<Config> = z.object({
+
+const DEFAULT_BEHAVIOR_PERSONAS: HBehaviorPersonas = {
+  spec: 'You are a careful software engineer. Inspect the relevant existing artifacts and constraints before making changes. Verify the result against the task.',
+  react: 'You are a hands-on software engineer. Work directly toward a usable result, then verify it. Do not add ceremony the assigned task does not need.',
+  weak: 'You are a software engineer completing one focused task. Decide whether inspection or direct production is appropriate, then complete and verify the assigned work.',
+}
+
+const DEFAULT_BEHAVIOR_ROUTING: HBehaviorRoutingConfig = {
+  enabled: true,
+  personas: DEFAULT_BEHAVIOR_PERSONAS,
+}
+
+interface ResolvedConfig extends Omit<Config, 'behavior'> {
+  behavior: HBehaviorRoutingConfig
+}
+
+export const Config = z.object({
   emitTodoMirror: z.boolean().default(false),
+  maxConcurrentSubtasks: z.number().step(1).min(1).max(8).default(3),
+  subagentProvider: z.string().default('spawn'),
+  behavior: z.object({
+    enabled: z.boolean().default(true),
+    personas: z.object({
+      spec: z.string().default(DEFAULT_BEHAVIOR_PERSONAS.spec),
+      react: z.string().default(DEFAULT_BEHAVIOR_PERSONAS.react),
+      weak: z.string().default(DEFAULT_BEHAVIOR_PERSONAS.weak),
+    }),
+  }).default(DEFAULT_BEHAVIOR_ROUTING),
 })
 
-/** Plugin-owned message source: injected messages never look user-authored. */
+const DEFAULT_CONFIG: ResolvedConfig = {
+  emitTodoMirror: false,
+  maxConcurrentSubtasks: 3,
+  subagentProvider: 'spawn',
+  behavior: DEFAULT_BEHAVIOR_ROUTING,
+}
 const PLUGIN = '@deepseek-ai/dsh-h-model-routing'
-
-/** Output budget for both classifier calls: enough for a brief thought plus the verdict. */
 const CLASSIFY_MAX_TOKENS = 256
 
-/** One tier binding resolved from the current settings section. */
 interface ResolvedRoute {
   provider: string
   model: string
-  /** Present only in manual mode with a configured effort. */
   effort?: string
 }
 
-/** Render an unknown thrown value for diagnostics. */
+/** Resolve optional deployment controls once at plugin construction. */
+function resolveConfig(config: Config): ResolvedConfig {
+  return {
+    emitTodoMirror: config.emitTodoMirror,
+    maxConcurrentSubtasks: config.maxConcurrentSubtasks,
+    subagentProvider: config.subagentProvider,
+    behavior: config.behavior ?? DEFAULT_BEHAVIOR_ROUTING,
+  }
+}
+
 function renderError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-/**
- * Wrap one orchestration instruction as a plugin-sourced user message tagged
- * with the `directive` context form: the conversation UI drops that form, so
- * the instruction reaches the model without surfacing as a chat row.
- */
 function directiveMessage(text: string): UserMessage {
-  return createUserMessage({
-    content: [{ type: 'text', text }],
-    source: { kind: 'plugin', plugin: PLUGIN, form: 'directive' },
-  })
+  return createUserMessage({ content: [{ type: 'text', text }], source: { kind: 'plugin', plugin: PLUGIN, form: 'directive' } })
 }
 
-/**
- * Wrap one routing verdict as a collapsed one-line `notice` context row so the
- * level-1/level-2 assessment shows in the transcript like a thinking trace.
- */
 function verdictNotice(summary: string, detail: string): UserMessage {
-  return createUserMessage({
-    content: [{ type: 'text', text: detail }],
-    source: { kind: 'plugin', plugin: PLUGIN, form: 'notice', summary },
-  })
+  return createUserMessage({ content: [{ type: 'text', text: detail }], source: { kind: 'plugin', plugin: PLUGIN, form: 'notice', summary } })
 }
 
-/** Mirror one H-routing snapshot to the legacy todo projection when enabled by composition. */
+/** Map richer DAG outcomes to the legacy Todo vocabulary when the compatibility mirror is enabled. */
+function todoStatus(status: HPlanSubtaskStatus): TodoItem['status'] {
+  if (status === 'completed') return 'completed'
+  if (status === 'in_progress') return 'in_progress'
+  return 'pending'
+}
+
 function writeTodos(agent: Agent, plan: HPlanProjection): void {
   if (plan.subtasks.length === 0) return
-  const todos: TodoItem[] = plan.subtasks.map((subtask, index) => ({
-    content: `${index + 1}. ${subtask.text}`,
-    status: subtask.status,
-  }))
-  agent.session.append('todo/write', { todos })
+  agent.session.append('todo/write', {
+    todos: plan.subtasks.map(subtask => ({ content: `${subtask.id}. ${subtask.title}`, status: todoStatus(subtask.status) })),
+  })
 }
 
-/** Require the current runtime cycle to own a durable plan before moving its state forward. */
 function currentPlan(state: HState): HPlanProjection {
   if (state.plan === undefined) throw new Error('h-model-routing active cycle has no durable plan snapshot')
   return state.plan
 }
 
-/** Build one complete execution-state snapshot from the runtime result ledger. */
+/** Build an immutable snapshot from the scheduler's mutable task ledger. */
 function planSnapshot(state: HState, phase: Extract<HPlanPhase, 'executing' | 'summarizing' | 'completed'>): HPlanProjection {
   const plan = currentPlan(state)
-  const status = (index: number): HPlanSubtaskStatus => {
-    if (phase === 'executing') {
-      if (index < state.index) return 'completed'
-      return index === state.index ? 'in_progress' : 'pending'
-    }
-    return 'completed'
-  }
   return {
     planId: plan.planId,
     turn: plan.turn,
     task: plan.task,
     phase,
-    subtasks: state.subtasks.map((subtask, index) => ({ text: subtask.text, status: status(index) })),
+    subtasks: state.subtasks.map(subtask => ({
+      id: subtask.id,
+      title: subtask.title,
+      instruction: subtask.instruction,
+      dependsOn: [...subtask.dependsOn],
+      status: subtask.status,
+      ...(subtask.route === undefined ? {} : { route: subtask.route }),
+      ...(subtask.behavior === undefined ? {} : { behavior: subtask.behavior }),
+      ...(subtask.sessionId === undefined ? {} : { sessionId: subtask.sessionId }),
+    })),
   }
 }
 
-/** Commit a durable plan snapshot before the matching next-step instruction can enter the inbox. */
 function publishPlan(agent: Agent, state: HState, plan: HPlanProjection, emitTodoMirror: boolean): void {
   agent.session.append('h-model-routing/state', plan)
   state.plan = plan
   if (emitTodoMirror) writeTodos(agent, plan)
 }
 
-/** Join the text blocks of one user message into the task text. */
 function taskText(message: UserMessage): string {
-  return message.content
-    .filter(block => block.type === 'text')
-    .map(block => block.text)
-    .join('\n')
-    .trim()
+  return message.content.filter(block => block.type === 'text').map(block => block.text).join('\n').trim()
 }
 
-/** The claimed batch's user-authored message, when one entered this step. */
 function findUserMessage(messages: readonly UserMessage[]): UserMessage | undefined {
   return messages.find(message => message.source.kind === 'user')
 }
 
-/** The final assistant text of one turn, from its durable message events. */
-function lastAssistantText(session: Session, turn: number): string {
-  let text = ''
-  for (const event of session.events) {
-    if (event.type !== 'assistant/message' || event.data.turn !== turn) continue
-    text = event.data.message.content
-      .filter(block => block.type === 'text')
-      .map(block => block.text)
-      .join('')
-      .trim()
-  }
-  return text
+function outputText(blocks: readonly ContentBlock[]): string {
+  return blocks.filter(block => block.type === 'text').map(block => block.text).join('').trim()
 }
 
-/**
- * Install the first-version hierarchical routing policy.
- * @param ctx - host context owning the listeners and the settings section.
- */
-export function apply(ctx: Context, config: Config = { emitTodoMirror: false }): void {
+function isTerminal(status: HPlanSubtaskStatus): boolean {
+  return status === 'completed' || status === 'failed' || status === 'blocked'
+}
 
-  // ---- settings section (same convention as agent-default-model) ----
+/** Install the hierarchical router and its bounded DAG scheduler. */
+export function apply(ctx: Context, config: Config = DEFAULT_CONFIG): void {
+  const resolvedConfig = resolveConfig(config)
   const defaults = ctx.get('agentDefaultModel')?.currentSelection()
   const entry: HModelRoutingSettings = {
-    light: {
-      provider: defaults?.provider ?? '',
-      model: defaults?.model ?? '',
-      reasoningEffort: '',
-    },
-    expert: {
-      provider: defaults?.provider ?? '',
-      model: defaults?.model ?? '',
-      reasoningEffort: '',
-    },
+    light: { provider: defaults?.provider ?? '', model: defaults?.model ?? '', reasoningEffort: '' },
+    expert: { provider: defaults?.provider ?? '', model: defaults?.model ?? '', reasoningEffort: '' },
     reasoningEffortMode: 'auto',
   }
   let source: () => HModelRoutingSettings = () => entry
-  installSettingsSection(
-    ctx,
-    H_MODEL_ROUTING_SETTINGS_NAMESPACE,
-    H_MODEL_ROUTING_SETTINGS_SCHEMA,
-    entry,
-    {
-      setSource: (current) => { source = current },
-      onChange: () => {},
-    },
-  )
+  installSettingsSection(ctx, H_MODEL_ROUTING_SETTINGS_NAMESPACE, H_MODEL_ROUTING_SETTINGS_SCHEMA, entry, {
+    setSource: (current) => { source = current },
+    onChange: () => {},
+  })
 
-  // This child is optional so headless compositions without the projection
-  // registry retain routing behavior while Web compositions receive snapshots.
   ctx.inject(['sessionProjections'], (projectionCtx) => {
     projectionCtx.sessionProjections.register(hModelRoutingProjectionDefinition)
   })
 
-  // ---- process-local routing state ----
   const states = new Map<Agent, HState>()
-  /** Manual-effort validation results, cached per (provider, model, effort). */
+  const activeRuns = new Set<SubagentRun>()
+  const lifetime = new AbortController()
   const effortCache = new Map<string, boolean>()
-
+  const classifierEffortCache = new Map<string, string | undefined>()
   const settings = (): HModelRoutingSettings => source()
 
-  /** Resolve one tier's binding; undefined while unconfigured. */
   function resolveRoute(kind: HRouteKind): ResolvedRoute | undefined {
-    const current = settings()
-    const binding = current[kind]
+    const binding = settings()[kind]
     if (binding.provider.trim() === '' || binding.model.trim() === '') return undefined
-    const effort = current.reasoningEffortMode === 'manual' && binding.reasoningEffort.trim() !== ''
-      ? binding.reasoningEffort
-      : undefined
-    return {
-      provider: binding.provider,
-      model: binding.model,
-      ...(effort === undefined ? {} : { effort }),
-    }
+    const effort = settings().reasoningEffortMode === 'manual' && binding.reasoningEffort.trim() !== '' ? binding.reasoningEffort : undefined
+    return { provider: binding.provider, model: binding.model, ...(effort === undefined ? {} : { effort }) }
   }
 
-  /**
-   * Validate a manual effort against its exact model once per triple, so an
-   * unsupported stored effort degrades to the model default instead of
-   * failing the routed step with UNSUPPORTED_REASONING_EFFORT.
-   */
   async function validateEffort(route: ResolvedRoute, signal?: AbortSignal): Promise<string | undefined> {
-    const effort = route.effort
-    if (effort === undefined) return undefined
-    const key = `${route.provider}/${route.model}/${effort}`
+    if (route.effort === undefined) return undefined
+    const key = `${route.provider}/${route.model}/${route.effort}`
     let valid = effortCache.get(key)
     if (valid === undefined) {
       try {
         await ctx.llm.resolveCallConfig({
           provider: route.provider,
           model: route.model,
-          reasoningEffort: ReasoningEffortId(effort),
+          reasoningEffort: ReasoningEffortId(route.effort),
         }, signal)
         valid = true
       } catch (error) {
-        ctx.logger.warn(
-          `h-model-routing: reasoning effort "${effort}" is invalid for ${route.provider}/${route.model}; omitting it: ${renderError(error)}`,
-        )
+        ctx.logger.warn(`h-model-routing: reasoning effort "${route.effort}" is invalid for ${route.provider}/${route.model}; omitting it: ${renderError(error)}`)
         valid = false
       }
       effortCache.set(key, valid)
     }
-    return valid ? effort : undefined
+    return valid ? route.effort : undefined
   }
 
-  /**
-   * Resolve the reasoning effort the classifier should run with: a thinking
-   * model would otherwise burn its output budget reasoning and never emit the
-   * verdict word, silently collapsing every classification to SIMPLE. Request
-   * `off` when the model advertises it, else omit (adapter default).
-   */
-  const classifierEffortCache = new Map<string, string | undefined>()
-  async function classifierEffort(
-    provider: string,
-    model: string,
-    signal?: AbortSignal,
-  ): Promise<string | undefined> {
+  async function classifierEffort(provider: string, model: string, signal?: AbortSignal): Promise<string | undefined> {
     const key = `${provider}/${model}`
-    const cached = classifierEffortCache.get(key)
-    if (cached !== undefined) return cached
+    if (classifierEffortCache.has(key)) return classifierEffortCache.get(key)
     let resolved: string | undefined
     try {
       const info = await ctx.llm.resolveModelInfo(provider, model, signal)
@@ -323,25 +306,15 @@ export function apply(ctx: Context, config: Config = { emitTodoMirror: false }):
     return resolved
   }
 
-  /** Run one complexity classifier call against the named tier. */
-  async function classify(
-    kind: HRouteKind,
-    task: string,
-    sessionId: SessionId,
-    signal: AbortSignal,
-  ): Promise<'simple' | 'complex'> {
+  async function classify(kind: HRouteKind, task: string, sessionId: SessionId, signal: AbortSignal): Promise<'simple' | 'complex'> {
     const route = resolveRoute(kind)
     if (route === undefined) throw new Error('h-model-routing: no configured route for the complexity classifier')
     const assembler = new BlockAssembler()
-    const messages: GenerateOptions['messages'] = [createUserMessage({
-      content: [{ type: 'text', text: classifyPrompt(task) }],
-      source: { kind: 'plugin', plugin: PLUGIN },
-    })]
     const effort = await classifierEffort(route.provider, route.model, signal)
     const options: GenerateOptions = {
       provider: route.provider,
       model: route.model,
-      messages,
+      messages: [createUserMessage({ content: [{ type: 'text', text: classifyPrompt(task) }], source: { kind: 'plugin', plugin: PLUGIN } })],
       system: CLASSIFY_SYSTEM,
       maxTokens: CLASSIFY_MAX_TOKENS,
       ...(effort === undefined ? {} : { reasoningEffort: ReasoningEffortId(effort) }),
@@ -350,242 +323,250 @@ export function apply(ctx: Context, config: Config = { emitTodoMirror: false }):
     }
     for await (const chunk of ctx.llm.stream(options)) assembler.push(chunk)
     const finish = assembler.finish
-    if (finish.kind === 'error' || finish.kind === 'aborted') {
-      throw new LlmError(finish.failure.message, finish.failure.code, finish.failure)
-    }
-    const text = assembler.blocks()
-      .filter(block => block.type === 'text')
-      .map(block => block.text)
-      .join('')
-    if (text.trim().length === 0) {
-      // No verdict word at all (e.g. the whole budget went to reasoning): the
-      // assessment failed, so the caller falls back instead of fabricating a
-      // SIMPLE verdict that would silently misroute real work to the light tier.
-      throw new Error('h-model-routing: classifier produced no verdict text')
-    }
-    return parseComplexity(text)
+    if (finish.kind === 'error' || finish.kind === 'aborted') throw new LlmError(finish.failure.message, finish.failure.code, finish.failure)
+    const verdict = assembler.blocks().filter(block => block.type === 'text').map(block => block.text).join('')
+    if (verdict.trim().length === 0) throw new Error('h-model-routing: classifier produced no verdict text')
+    return parseComplexity(verdict)
   }
 
-  /** Planner output that did not satisfy the required numbered multi-step list. */
-  class PlannerOutputError extends Error {}
-
-  /** Run the expert planner as an isolated no-tools LLM request. */
-  async function plan(
-    task: string,
-    sessionId: SessionId,
-    signal: AbortSignal,
-  ): Promise<string[]> {
-    const route = resolveRoute('expert')
-    if (route === undefined) throw new Error('h-model-routing: no configured expert route for planning')
-    const effort = await validateEffort(route, signal)
+  /** Classify one DAG node's model tier and, when requested, its isolated worker persona. */
+  async function classifySubtask(task: string, sessionId: SessionId, signal: AbortSignal): Promise<HSubtaskRoutingDecision> {
+    const route = resolveRoute('light')
+    if (route === undefined) throw new Error('h-model-routing: no configured route for the level-2 classifier')
     const assembler = new BlockAssembler()
+    const effort = await classifierEffort(route.provider, route.model, signal)
     const options: GenerateOptions = {
       provider: route.provider,
       model: route.model,
-      messages: [createUserMessage({
-        content: [{ type: 'text', text: plannerPrompt(task) }],
-        source: { kind: 'plugin', plugin: PLUGIN },
-      })],
-      // Omitting `tools` keeps this raw LLM request independent of the agent's
-      // assembled schemas, so planning cannot execute task tools.
+      messages: [createUserMessage({ content: [{ type: 'text', text: subtaskRoutingPrompt(task) }], source: { kind: 'plugin', plugin: PLUGIN } })],
+      system: SUBTASK_ROUTING_SYSTEM,
+      maxTokens: CLASSIFY_MAX_TOKENS,
       ...(effort === undefined ? {} : { reasoningEffort: ReasoningEffortId(effort) }),
       sessionId,
       signal,
     }
     for await (const chunk of ctx.llm.stream(options)) assembler.push(chunk)
-    signal.throwIfAborted()
     const finish = assembler.finish
-    if (finish.kind === 'error' || finish.kind === 'aborted') {
-      throw new LlmError(finish.failure.message, finish.failure.code, finish.failure)
-    }
-    const subtasks = parseSubtasks(assembler.blocks()
-      .filter(block => block.type === 'text')
-      .map(block => block.text)
-      .join(''))
-    if (subtasks.length === 0) {
-      throw new PlannerOutputError('h-model-routing: planner produced no valid numbered subtask list')
-    }
-    return subtasks
+    if (finish.kind === 'error' || finish.kind === 'aborted') throw new LlmError(finish.failure.message, finish.failure.code, finish.failure)
+    const verdict = assembler.blocks().filter(block => block.type === 'text').map(block => block.text).join('')
+    const decision = parseSubtaskRouting(verdict)
+    if (decision === undefined) throw new Error('h-model-routing: level-2 classifier produced no valid routing verdict')
+    return decision
   }
 
-  /** Stable failure detail shown in the H plan panel without exposing provider internals. */
-  function plannerFailure(error: unknown): string {
-    return error instanceof PlannerOutputError
-      ? 'The planner did not produce a valid numbered subtask list.'
-      : 'The planner request failed.'
-  }
-
-  /** Start a durable plan immediately after level-1 accepts the complex route. */
   function planningSnapshot(task: string, turn: number): HPlanProjection {
-    return {
-      planId: HPlanId(`h-plan-${randomUUID()}`),
-      turn,
-      task,
-      phase: 'planning',
-      subtasks: [],
+    return { planId: HPlanId(`h-plan-${randomUUID()}`), turn, task, phase: 'planning', subtasks: [] }
+  }
+
+  function dependencies(state: HState, subtask: HSubtask): HDependencyResult[] {
+    return subtask.dependsOn.map((id) => {
+      const dependency = state.subtasks[id - 1]
+      if (dependency === undefined || dependency.status !== 'completed') throw new Error(`h-model-routing: task ${subtask.id} has unresolved dependency ${id}`)
+      return { id: dependency.id, title: dependency.title, result: dependency.result ?? '(no result)' }
+    })
+  }
+
+  function markBlocked(state: HState): void {
+    let changed = true
+    while (changed) {
+      changed = false
+      for (const subtask of state.subtasks) {
+        if (subtask.status !== 'pending') continue
+        if (subtask.dependsOn.some((id) => {
+          const dependency = state.subtasks[id - 1]
+          return dependency?.status === 'failed' || dependency?.status === 'blocked'
+        })) {
+          subtask.status = 'blocked'
+          subtask.failure = 'A required dependency did not complete.'
+          changed = true
+        }
+      }
     }
   }
 
-  /** Classify one newly admitted H-plan item after its full snapshot is durable. */
-  async function enterSubtask(
-    agent: Agent,
-    state: HState,
-    signal: AbortSignal,
-    decision: PreStepDecision & { kind: 'enter' },
-    prefix: readonly UserMessage[] = [],
-  ): Promise<PreStepDecision> {
-    const subtask = state.subtasks[state.index]
-    if (subtask === undefined) return decision
-    if (state.classifiedSubtaskIndex === state.index) return decision
+  function readySubtasks(state: HState): HSubtask[] {
+    return state.subtasks.filter(subtask => subtask.status === 'pending' && subtask.dependsOn.every(id => state.subtasks[id - 1]?.status === 'completed'))
+  }
+
+  function nodeFailure(result: SubagentResult): string {
+    return result.stopReason === 'completed' ? '' : `The isolated worker ended with ${result.stopReason}.`
+  }
+
+  /** Resolve the selected scoped persona and reject providers that cannot apply it. */
+  function subtaskPersona(behavior: HPlanSubtaskBehavior | undefined): string | undefined {
+    if (behavior === undefined) return undefined
+    const persona = resolvedConfig.behavior.personas[behavior].trim()
+    if (persona.length === 0) return undefined
+    const provider = ctx.subagents.getProvider(resolvedConfig.subagentProvider)
+    if (provider !== undefined && !provider.capabilities.persona) {
+      throw new Error(`h-model-routing: subagent provider "${resolvedConfig.subagentProvider}" does not support behavior personas`)
+    }
+    return persona
+  }
+
+  async function disposeRun(run: SubagentRun): Promise<void> {
+    activeRuns.delete(run)
+    await run.dispose()
+  }
+
+  async function drainRuns(runs: Iterable<SubagentRun>): Promise<void> {
+    await Promise.allSettled([...runs].map(async run => disposeRun(run)))
+  }
+
+  async function runSubtask(agent: Agent, state: HState, signal: AbortSignal, subtask: HSubtask): Promise<void> {
+    let run: SubagentRun | undefined
     try {
+      let kind: HRouteKind
+      try {
+        const decision = resolvedConfig.behavior.enabled
+          ? await classifySubtask(subtask.instruction, agent.session.id, signal)
+          : { complexity: await classify('light', subtask.instruction, agent.session.id, signal) }
+        kind = decision.complexity === 'complex' ? 'expert' : 'light'
+        if (decision.behavior !== undefined) subtask.behavior = decision.behavior
+      } catch (error) {
+        if (signal.aborted) throw error
+        ctx.logger.warn(`h-model-routing: level-2 assessment failed for task ${subtask.id}; routing to expert: ${renderError(error)}`)
+        kind = 'expert'
+      }
       signal.throwIfAborted()
-      const verdict = await classify('light', subtask.text, agent.session.id, signal)
+      subtask.route = kind
+      publishPlan(agent, state, planSnapshot(state, 'executing'), resolvedConfig.emitTodoMirror)
+      const route = resolveRoute(kind)
+      if (route === undefined) throw new Error(`h-model-routing: no configured ${kind} route for task ${subtask.id}`)
+      const persona = subtaskPersona(subtask.behavior)
+      run = await ctx.subagents.start(resolvedConfig.subagentProvider, {
+        label: `${subtask.id}. ${subtask.title}`,
+        parent: agent,
+        prompt: [{ type: 'text', text: subtaskPrompt(state.task, subtask, dependencies(state, subtask)) }],
+        signal,
+        agentOptions: { provider: route.provider, model: route.model },
+        ...(persona === undefined ? {} : { persona }),
+      })
+      activeRuns.add(run)
+      subtask.sessionId = run.id
+      publishPlan(agent, state, planSnapshot(state, 'executing'), resolvedConfig.emitTodoMirror)
+      const result = await run.result
       signal.throwIfAborted()
-      state.route = verdict === 'complex' ? 'expert' : 'light'
+      if (result.stopReason === 'completed') {
+        subtask.status = 'completed'
+        subtask.result = outputText(result.output)
+      } else {
+        subtask.status = 'failed'
+        subtask.result = outputText(result.output)
+        subtask.failure = nodeFailure(result)
+        markBlocked(state)
+      }
     } catch (error) {
       if (signal.aborted) throw error
-      ctx.logger.warn(
-        `h-model-routing: level-2 assessment failed for agent "${agent.id}"; routing the subtask to expert: ${renderError(error)}`,
-      )
-      state.route = 'expert'
+      subtask.status = 'failed'
+      subtask.failure = 'The isolated worker could not be started or completed.'
+      markBlocked(state)
+      ctx.logger.warn(`h-model-routing: task ${subtask.id} failed: ${renderError(error)}`)
+    } finally {
+      if (run !== undefined) await disposeRun(run)
     }
-    state.classifiedSubtaskIndex = state.index
-    const index = state.index
-    const kind = state.route
-    return {
-      kind: 'enter',
-      messages: [
-        ...decision.messages,
-        ...prefix,
-        verdictNotice(
-          `Level-2 assessment: subtask ${index + 1} ${kind === 'expert' ? 'complex' : 'simple'}`,
-          `Routed subtask ${index + 1} to the ${kind} model.`,
-        ),
-      ],
+    signal.throwIfAborted()
+    publishPlan(agent, state, planSnapshot(state, 'executing'), resolvedConfig.emitTodoMirror)
+  }
+
+  /** Schedule ready DAG nodes until every node reaches a terminal state. */
+  async function executePlan(agent: Agent, state: HState, signal: AbortSignal): Promise<void> {
+    const active = new Set<Promise<void>>()
+    try {
+      while (true) {
+        signal.throwIfAborted()
+        markBlocked(state)
+        const capacity = resolvedConfig.maxConcurrentSubtasks - active.size
+        const ready = capacity > 0 ? readySubtasks(state).slice(0, capacity) : []
+        if (ready.length > 0) {
+          for (const subtask of ready) subtask.status = 'in_progress'
+          publishPlan(agent, state, planSnapshot(state, 'executing'), resolvedConfig.emitTodoMirror)
+          for (const subtask of ready) {
+            const worker = runSubtask(agent, state, signal, subtask).finally(() => { active.delete(worker) })
+            active.add(worker)
+          }
+          continue
+        }
+        if (active.size > 0) {
+          await Promise.race(active)
+          continue
+        }
+        if (state.subtasks.every(subtask => isTerminal(subtask.status))) return
+        throw new Error('h-model-routing: DAG scheduler found no ready or active task')
+      }
+    } finally {
+      if (signal.aborted) await Promise.allSettled(active)
     }
   }
 
-  /**
-   * Decide the next step's tier at the step boundary. Assessments run after
-   * the downstream waterfall so a rejected step spends no classifier call.
-   */
   async function onPreStep(
     agent: Agent,
     state: HState,
     turn: number,
     signal: AbortSignal,
+    assembly: PromptAssembly,
     next: () => Promise<PreStepDecision>,
   ): Promise<PreStepDecision> {
+    const operationSignal = AbortSignal.any([signal, lifetime.signal])
     const decision = await next()
     if (decision.kind !== 'enter') {
       resetHState(state)
       return decision
     }
-    const userMessage = findUserMessage(decision.messages)
-    // A fresh user-authored message always owns a fresh cycle, even when a
-    // previous orchestration aborted mid-flight.
-    if (userMessage !== undefined) resetHState(state)
-
-    if (state.phase === 'idle') {
-      if (userMessage === undefined) return decision
-      const task = taskText(userMessage)
-      if (task.length === 0) return decision
-      // Clear a completed, failed, or interrupted plan before the new task's
-      // level-1 call, so stale visible progress never belongs to a new request.
-      agent.session.append('h-model-routing/state', null)
-      try {
-        signal.throwIfAborted()
-        const verdict = await classify('expert', task, agent.session.id, signal)
-        signal.throwIfAborted()
-        if (verdict === 'complex') {
-          state.phase = 'planning'
-          state.route = 'expert'
-          state.task = task
-          const planning = planningSnapshot(task, turn)
-          publishPlan(agent, state, planning, config.emitTodoMirror)
-          try {
-            const subtasks = await plan(task, agent.session.id, signal)
-            signal.throwIfAborted()
-            state.phase = 'subtasks'
-            state.index = 0
-            state.subtasks = subtasks.map(text => ({ text }))
-            publishPlan(agent, state, planSnapshot(state, 'executing'), config.emitTodoMirror)
-            const first = subtasks[0]
-            /* v8 ignore next -- plan() rejects an empty parsed list. */
-            if (first === undefined) throw new Error('h-model-routing parsed plan unexpectedly lacks its first subtask')
-            return enterSubtask(agent, state, signal, decision, [
-              verdictNotice('Level-1 assessment: complex', 'Routed to the expert model for planning.'),
-              directiveMessage(subtaskPrompt(0, subtasks.length, first)),
-            ])
-          } catch (error) {
-            if (signal.aborted) throw error
-            const failure = plannerFailure(error)
-            const failed: HPlanProjection = {
-              planId: planning.planId,
-              turn: planning.turn,
-              task: planning.task,
-              phase: 'failed',
-              subtasks: [],
-              failure,
-            }
-            publishPlan(agent, state, failed, config.emitTodoMirror)
-            state.phase = 'direct'
-            state.route = 'expert'
-            return {
-              kind: 'enter',
-              messages: [
-                ...decision.messages,
-                verdictNotice('Level-1 assessment: complex', 'Routed to the expert model for planning.'),
-                verdictNotice('Planning failed', failure),
-                directiveMessage(directPrompt(task)),
-              ],
-            }
-          }
-        }
-        state.route = 'light'
-        return {
-          kind: 'enter',
-          messages: [
-            ...decision.messages,
-            verdictNotice('Level-1 assessment: simple', 'Routed to the light model for a direct answer.'),
-          ],
-        }
-      } catch (error) {
-        if (signal.aborted) throw error
-        ctx.logger.warn(
-          `h-model-routing: level-1 assessment failed for agent "${agent.id}"; falling back to default routing: ${renderError(error)}`,
-        )
-        return decision
-      }
-    }
-
-    if (state.phase === 'subtasks') return enterSubtask(agent, state, signal, decision)
     if (state.phase === 'summarizing') {
-      state.route = 'light'
+      return { ...decision, assembly: { ...(decision.assembly ?? assembly), tools: [] } }
+    }
+    const userMessage = findUserMessage(decision.messages)
+    if (state.phase !== 'idle' && state.phase !== 'assessing') return decision
+    if (userMessage === undefined) {
+      resetHState(state)
       return decision
     }
-    if (state.phase === 'direct') {
+    const task = taskText(userMessage)
+    if (task.length === 0) {
+      resetHState(state)
+      return decision
+    }
+    state.phase = 'assessing'
+    agent.session.append('h-model-routing/state', null)
+    try {
+      const verdict = await classify('expert', task, agent.session.id, operationSignal)
+      operationSignal.throwIfAborted()
+      if (verdict === 'simple') {
+        state.phase = 'direct'
+        state.route = 'light'
+        return { kind: 'enter', messages: [...decision.messages, verdictNotice('Level-1 assessment: simple', 'Routed to the light model for a direct answer.')] }
+      }
+      state.phase = 'planning'
       state.route = 'expert'
+      state.task = task
+      const planning = planningSnapshot(task, turn)
+      publishPlan(agent, state, planning, resolvedConfig.emitTodoMirror)
+      return {
+        kind: 'enter',
+        messages: [
+          ...decision.messages,
+          verdictNotice('Level-1 assessment: complex', 'Routed to the expert model for visible DAG planning.'),
+          directiveMessage(plannerPrompt(task)),
+        ],
+        assembly: { ...(decision.assembly ?? assembly), tools: [] },
+      }
+    } catch (error) {
+      if (operationSignal.aborted) throw error
+      resetHState(state)
+      ctx.logger.warn(`h-model-routing: level-1 assessment failed for agent "${agent.id}": ${renderError(error)}`)
       return decision
     }
-    return decision
   }
 
-  /** Apply the selected tier to the request config, overriding the route only. */
-  async function onRequest(
-    state: HState,
-    signal: AbortSignal,
-    next: () => Promise<LlmCallConfig>,
-  ): Promise<LlmCallConfig> {
-    const resolved = await next()
+  async function onRequest(state: HState, signal: AbortSignal, next: () => Promise<LlmCallConfig>): Promise<LlmCallConfig> {
+    const request = await next()
     const kind = state.route
-    if (kind === undefined) return resolved
+    if (kind === undefined) return request
     const route = resolveRoute(kind)
-    if (route === undefined) return resolved
+    if (route === undefined) return request
     const effort = await validateEffort(route, signal)
-    // The routed model owns the effort decision: auto mode (or a dropped
-    // invalid effort) must not inherit an effort proposed for another model.
-    const { reasoningEffort: _dropped, ...base } = resolved
+    const { reasoningEffort: _dropped, ...base } = request
     return {
       ...base,
       provider: route.provider,
@@ -594,69 +575,85 @@ export function apply(ctx: Context, config: Config = { emitTodoMirror: false }):
     }
   }
 
-  /** Advance the orchestration at the turn-stop boundary via steering. */
-  async function onTurnStopping(agent: Agent, state: HState, turn: number): Promise<void> {
+  function plannerOutput(agent: Agent, state: HState): string {
+    const turn = currentPlan(state).turn
+    const event = agent.session.events.findLast(candidate =>
+      candidate.type === 'assistant/message' && candidate.data.turn === turn)
+    return event?.type === 'assistant/message' ? outputText(event.data.message.content) : ''
+  }
+
+  function failPlanner(agent: Agent, state: HState, failure: string): void {
+    const plan = currentPlan(state)
+    publishPlan(agent, state, { ...plan, phase: 'failed', failure }, resolvedConfig.emitTodoMirror)
+    state.phase = 'direct'
+    state.route = 'expert'
+    agent.inject(verdictNotice('Planning failed', failure))
+    agent.steer(directiveMessage(directPrompt(state.task)))
+  }
+
+  async function onTurnStopping(agent: Agent, state: HState, signal: AbortSignal): Promise<void> {
     switch (state.phase) {
-      case 'idle':
       case 'planning': {
-        state.route = undefined
-        return
-      }
-      case 'subtasks': {
-        const result = lastAssistantText(agent.session, turn)
-        const current = state.subtasks[state.index]
-        if (current !== undefined) current.result = result
-        const nextIndex = state.index + 1
-        const next = nextIndex < state.subtasks.length ? state.subtasks[nextIndex] : undefined
-        if (next !== undefined) {
-          state.index = nextIndex
-          publishPlan(agent, state, planSnapshot(state, 'executing'), config.emitTodoMirror)
-          agent.steer(directiveMessage(subtaskPrompt(nextIndex, state.subtasks.length, next.text)))
-        } else {
-          state.index = state.subtasks.length
-          state.phase = 'summarizing'
-          state.route = 'light'
-          publishPlan(agent, state, planSnapshot(state, 'summarizing'), config.emitTodoMirror)
-          agent.steer(directiveMessage(summaryPrompt(state.task, state.subtasks)))
+        const tasks: HPlanTask[] = parseSubtasks(plannerOutput(agent, state))
+        if (tasks.length === 0) {
+          failPlanner(agent, state, 'The planner did not produce a valid task DAG.')
+          return
         }
+        state.phase = 'subtasks'
+        state.subtasks = tasks.map(subtask => ({ ...subtask, status: 'pending' }))
+        const operationSignal = AbortSignal.any([signal, lifetime.signal])
+        await executePlan(agent, state, operationSignal)
+        operationSignal.throwIfAborted()
+        state.phase = 'summarizing'
+        state.route = 'expert'
+        publishPlan(agent, state, planSnapshot(state, 'summarizing'), resolvedConfig.emitTodoMirror)
+        agent.steer(directiveMessage(summaryPrompt(state.task, state.subtasks)))
         return
       }
-      case 'direct': {
-        // A planner failure is terminal from the H plan's perspective. The
-        // expert's direct answer is already the final answer, so do not invent
-        // a single-item plan or add an extra summary step.
+      case 'summarizing':
+        publishPlan(agent, state, planSnapshot(state, 'completed'), resolvedConfig.emitTodoMirror)
         resetHState(state)
         return
-      }
-      case 'summarizing': {
-        publishPlan(agent, state, planSnapshot(state, 'completed'), config.emitTodoMirror)
+      case 'direct':
         resetHState(state)
         return
-      }
+      case 'idle':
+      case 'assessing':
+      case 'subtasks':
+        state.route = undefined
     }
   }
 
-  // ---- wiring: root agents of this surface only, per-agent listeners ----
   ctx.on('agent/created', ({ agent }) => {
-    if (states.has(agent)) return
-    if (!ctx.agents.roots().includes(agent)) return
-    if (agent.session.header.origin === 'subagent') return
-    if ((agent.session.header.delegationDepth ?? 0) > 0) return
+    if (states.has(agent) || !ctx.agents.roots().includes(agent) || agent.session.header.origin === 'subagent' || (agent.session.header.delegationDepth ?? 0) > 0) return
     const state = createHState()
     states.set(agent, state)
-    agent.ctx.on('agent/pre-step', (payload, next) =>
-      onPreStep(agent, state, payload.turn, payload.signal, next),
-    )
-    agent.ctx.on('agent/request', (payload, next) =>
-      onRequest(state, payload.signal, next),
-    )
-    agent.ctx.on('agent/turn-stopping', payload =>
-      onTurnStopping(agent, state, payload.turn),
-    )
+    agent.ctx.on('agent/pre-step', (payload, next) => onPreStep(agent, state, payload.turn, payload.signal, payload.assembly, next))
+    agent.ctx.on('agent/request', (payload, next) => onRequest(state, payload.signal, next))
+    agent.ctx.on('agent/request-error', async (_payload, next) => {
+      const action = await next()
+      if (state.phase === 'planning' && action?.kind !== 'retry') {
+        failPlanner(agent, state, 'The planner request failed.')
+      }
+      return action
+    })
+    agent.ctx.on('agent/turn-stopping', ({ signal }) => onTurnStopping(agent, state, signal))
+    agent.ctx.on('agent/status', ({ status }) => {
+      if (status === 'idle') resetHState(state)
+    })
   })
   ctx.on('agent/disposed', ({ agent }) => { states.delete(agent) })
   ctx.on('agent/error', ({ agent }) => {
     const state = states.get(agent)
-    if (state !== undefined) resetHState(state)
+    if (state === undefined || state.phase === 'direct') return
+    if (state.phase === 'planning') {
+      failPlanner(agent, state, 'The planner request failed.')
+      return
+    }
+    resetHState(state)
   })
+  ctx.effect(() => async () => {
+    lifetime.abort(new Error('h-model-routing unloaded'))
+    await drainRuns(activeRuns)
+  }, 'h-model-routing: drain isolated DAG workers')
 }

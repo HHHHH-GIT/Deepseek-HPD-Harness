@@ -24,7 +24,7 @@ export type {
 } from './contract/views.ts'
 export type { ConversationKey } from './locales.ts'
 export type {
-  AssistantChatData, ChatNode, ChatNodeDataMap, ChatNodeKind, ManualCompactionChatData,
+  AssistantChatData, AssistantPresentationData, ChatNode, ChatNodeDataMap, ChatNodeKind, ManualCompactionChatData,
   RetryChatData, ToolChatData, TurnTailChatData,
 } from './contract/chat-nodes.ts'
 export type {

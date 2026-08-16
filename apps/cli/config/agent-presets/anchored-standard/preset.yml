@@ -1,0 +1,3 @@
+name: 锚定标准模式（实验）
+description: 首次请求使用极简模式的 bash 与 str_replace_editor，并在后续请求中通过工具检索按需解锁标准能力；隔离子 Agent 始终保留完整工具目录。
+order: 5

@@ -25,10 +25,10 @@
 
 /* Appearance cube (figma '.Selector Cube' 276x82 r16, pad 20/32, centered
  * icon-over-label column, gap 4); flexed down from the figma width so all
- * three sit on one row in the 800 panel, wrapping when narrower. */
+ * four sit on one row in the 800 panel, wrapping when narrower. */
 .themeCube {
   box-sizing: border-box;
-  flex: 1 1 180px;
+  flex: 1 1 150px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -43,6 +43,18 @@
   line-height: 22px;
   color: var(--dsw-alias-label-primary);
   cursor: pointer;
+}
+
+/* Theme swatch follows semantic tokens; the selected state below remains
+ * authoritative and the active Claude theme supplies the warm values. */
+.themeCube[data-theme='claude']:not(.selected) {
+  background: var(--dsw-alias-bg-layer-2);
+  border-color: var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-primary);
+}
+
+.themeCube[data-theme='claude']:hover:not(.selected) {
+  background: var(--dsw-alias-interactive-bg-hover-solid);
 }
 
 .themeCube:hover:not(.selected) {

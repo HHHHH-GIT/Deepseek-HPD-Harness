@@ -21,6 +21,17 @@ const make = (host = stubSettingsScope<ThemeSettings>()): {
   return { ctx, theme: new ThemeRuntime(ctx, host.scope), events, host }
 }
 
+function contrastRatio(left: string, right: string): number {
+  const luminance = (hex: string): number => {
+    const channels = [1, 3, 5].map(offset => Number.parseInt(hex.slice(offset, offset + 2), 16) / 255)
+      .map(channel => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4)
+    return 0.2126 * channels[0]! + 0.7152 * channels[1]! + 0.0722 * channels[2]!
+  }
+  const first = luminance(left)
+  const second = luminance(right)
+  return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05)
+}
+
 describe('ThemeRuntime', () => {
   it('defaults to the system preference resolved against prefers-color-scheme', () => {
     const { theme } = make()
@@ -29,7 +40,7 @@ describe('ThemeRuntime', () => {
     // jsdom matchMedia is absent; system resolves to light.
     expect(snapshot.active.id).toBe('light')
     expect(snapshot.active.colorScheme).toBe('light')
-    expect(snapshot.themes.map(t => t.id)).toEqual(['light', 'dark'])
+    expect(snapshot.themes.map(t => t.id)).toEqual(['light', 'dark', 'claude'])
   })
 
   it('setTheme switches, writes through the scope, republishes, and keeps DOM untouched', () => {
@@ -46,6 +57,39 @@ describe('ThemeRuntime', () => {
     theme.setTheme('dark')
     expect(events).toHaveLength(1)
     expect(host.set).toHaveBeenCalledOnce()
+  })
+
+  it('provides the warm Claude-style built-in palette and persists the choice', () => {
+    const { theme, host } = make()
+    theme.setTheme('claude')
+    expect(theme.getTheme().active).toMatchObject({ id: 'claude', colorScheme: 'light' })
+    expect(theme.getTheme().active.tokens).toMatchObject({
+      '--dsw-alias-bg-base': '#F7F3EE',
+      '--dsw-alias-label-primary': '#2F2924',
+      '--dsw-alias-brand-primary': '#D97757',
+      '--shiki-foreground': '#F5EFE8',
+      '--shiki-token-punctuation': '#E7D8CB',
+    })
+    expect(theme.getTheme().active.tokens['--dsw-font-family']).toContain('Anthropic Sans')
+    expect(theme.getTheme().active.tokens['--dsw-font-markdown-base']).toContain('Anthropic Serif')
+    expect(theme.getTheme().active.tokens['--ds-font-family-code']).toContain('Anthropic Mono')
+    expect(host.set).toHaveBeenCalledWith('preference', 'claude')
+  })
+
+  it('keeps every Claude syntax role readable on its dark code surface', () => {
+    const { theme } = make()
+    theme.setTheme('claude')
+    const tokens = theme.getTheme().active.tokens
+    const background = tokens['--shiki-background']!
+    const syntaxRoles = [
+      '--shiki-foreground', '--shiki-token-constant', '--shiki-token-string',
+      '--shiki-token-comment', '--shiki-token-keyword', '--shiki-token-parameter',
+      '--shiki-token-function', '--shiki-token-string-expression',
+      '--shiki-token-punctuation', '--shiki-token-link',
+    ]
+    for (const role of syntaxRoles) {
+      expect(contrastRatio(tokens[role]!, background), role).toBeGreaterThanOrEqual(4.5)
+    }
   })
 
   it('adopts a published Host section without writing it back', () => {
@@ -75,12 +119,12 @@ describe('ThemeRuntime', () => {
   it('registered themes join the snapshot; disposing the active one resets to default', () => {
     const { theme, events, host } = make()
     const dispose = theme.register({ id: 'sepia', colorScheme: 'light', tokens: { '--dsw-alias-bg-base': 'red' } })
-    expect(theme.getTheme().themes.map(t => t.id)).toEqual(['light', 'dark', 'sepia'])
+    expect(theme.getTheme().themes.map(t => t.id)).toEqual(['light', 'dark', 'claude', 'sepia'])
     theme.setTheme('sepia')
     expect(theme.getTheme().active.tokens['--dsw-alias-bg-base']).toBe('red')
     dispose()
     expect(theme.getTheme().preference).toBe('system')
-    expect(theme.getTheme().themes.map(t => t.id)).toEqual(['light', 'dark'])
+    expect(theme.getTheme().themes.map(t => t.id)).toEqual(['light', 'dark', 'claude'])
     // Custom ids are in-process extension themes; only the built-in product
     // preferences cross the Host settings schema.
     expect(host.set).not.toHaveBeenCalled()

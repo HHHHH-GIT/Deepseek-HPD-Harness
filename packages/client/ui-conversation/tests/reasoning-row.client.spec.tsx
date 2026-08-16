@@ -39,6 +39,25 @@ afterEach(() => {
 const t = makeTranslate(zh, commonZh)
 
 describe('ReasoningRow', () => {
+  it('keeps marked Assistant text collapsed until the user expands it', () => {
+    const text = '{"subtasks":[{"id":1}]}'
+    const view = render(
+      <AssistantMarkdown
+        t={t}
+        blocks={[{ kind: 'text', text }]}
+        streaming={false}
+        collapsedTextLabel="规划结果"
+      />,
+    )
+    const row = view.getByRole('button', { name: '规划结果' })
+    expect(row.getAttribute('aria-expanded')).toBe('false')
+    expect(view.container.textContent).not.toContain('subtasks')
+
+    fireEvent.click(row)
+    expect(row.getAttribute('aria-expanded')).toBe('true')
+    expect(view.container.textContent).toContain('subtasks')
+  })
+
   it('follows the latest streaming line, scrolls to its end, then restores the settled first line', () => {
     const view = render(
       <AssistantMarkdown

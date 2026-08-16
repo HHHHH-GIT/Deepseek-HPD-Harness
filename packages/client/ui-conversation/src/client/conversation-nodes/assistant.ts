@@ -7,7 +7,7 @@ import {
   emptyAssistantBlock, isAppendSurfaceEvent, isTokenDelta, toAssistantBlock, toAssistantBlocks,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-llm-retry/types'
-import type { AssistantChatData } from '../contract/chat-nodes.ts'
+import type { AssistantChatData, AssistantPresentationData } from '../contract/chat-nodes.ts'
 import { CHAT_SYNTHETIC_SEQ_OFFSETS, chatNode } from './common.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
@@ -18,6 +18,11 @@ declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
 }
 
 declare module '@deepseek-ai/dsh-client-runtime/client' {
+  interface ConversationTurnDataMap {
+    /** Optional per-step secondary-output presentation supplied by orchestration plugins. */
+    'assistant-presentation': AssistantPresentationData
+  }
+
   interface ConversationStepDataMap {
     /** Streaming, settled, or interrupted Assistant material for this Step. */
     'assistant-step': AssistantChatData

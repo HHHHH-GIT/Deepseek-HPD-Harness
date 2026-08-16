@@ -7,6 +7,10 @@ export const AssistantNodeView = memo(function AssistantNodeView({
   node, useTurnData, openFile, loadImage, fileMentions, t,
 }: ChatNodeViewProps<'assistant-step'>) {
   const data = node.data
+  const presentation = useTurnData('assistant-presentation')
+  const collapsedTextLabel = presentation?.collapsedTextSteps.includes(data.step) === true
+    ? t('message.planOutput')
+    : undefined
   const turn = node.location.kind === 'turn' || node.location.kind === 'step'
     ? node.location.turn
     : undefined
@@ -27,6 +31,7 @@ export const AssistantNodeView = memo(function AssistantNodeView({
       interrupted={data.status === 'interrupted'}
       loadImage={loadImage}
       mentions={mentions}
+      collapsedTextLabel={collapsedTextLabel}
       t={t}
     />
   )

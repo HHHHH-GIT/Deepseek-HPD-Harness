@@ -1,6 +1,6 @@
 /**
  * Browser theme registry over the `--dsw-*` token stylesheets. The service
- * owns the live theme preference (light/dark/system), resolves `system` through
+ * owns the live theme preference (light/dark/claude/system), resolves `system` through
  * `prefers-color-scheme`, and publishes immutable snapshots; it never touches
  * the DOM — ui-layout's presenter consumes the resolved snapshot. The Host
  * settings scope loads and stores the preference in the user-settings
@@ -118,6 +118,79 @@ declare module '@deepseek-ai/cordis' {
 const BUILTIN_THEMES: readonly ThemeDefinition[] = Object.freeze([
   Object.freeze({ id: 'light', colorScheme: 'light' as const, tokens: Object.freeze({}) }),
   Object.freeze({ id: 'dark', colorScheme: 'dark' as const, tokens: Object.freeze({}) }),
+  Object.freeze({
+    id: 'claude',
+    colorScheme: 'light' as const,
+    tokens: Object.freeze({
+      '--dsw-alias-bg-base': '#F7F3EE',
+      '--dsw-alias-bg-layer-1': '#FCFAF7',
+      '--dsw-alias-bg-layer-2': '#F3EEE8',
+      '--dsw-alias-bg-layer-3': '#ECE5DD',
+      '--dsw-alias-bg-overlay': '#FFFDFC',
+      '--dsw-alias-bg-module-platform': '#EFE8E0',
+      '--dsw-alias-border-l1': 'rgba(67, 52, 39, 0.08)',
+      '--dsw-alias-border-l2': 'rgba(67, 52, 39, 0.14)',
+      '--dsw-alias-border-l3': 'rgba(67, 52, 39, 0.20)',
+      '--dsw-alias-label-primary': '#2F2924',
+      '--dsw-alias-label-secondary': '#6B625B',
+      '--dsw-alias-label-tertiary': '#8B8178',
+      '--dsw-alias-label-caption': '#A79B91',
+      '--dsw-alias-label-primary-foreground': '#FFFDFC',
+      '--dsw-alias-label-primary-inverted': '#FFFDFC',
+      '--dsw-font-family': "'Anthropic Sans', 'Segoe UI Variable Text', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif",
+      '--ds-font-family-code': "'Anthropic Mono', 'JetBrains Mono', 'SFMono-Regular', Consolas, 'Liberation Mono', 'PingFang SC', 'Microsoft YaHei'",
+      '--dsw-font-markdown-h1': "700 24px/34px 'Anthropic Serif', Georgia, 'Songti SC', 'Noto Serif CJK SC', SimSun, serif",
+      '--dsw-font-markdown-h2': "700 22px/32px 'Anthropic Serif', Georgia, 'Songti SC', 'Noto Serif CJK SC', SimSun, serif",
+      '--dsw-font-markdown-h3': "700 20px/30px 'Anthropic Serif', Georgia, 'Songti SC', 'Noto Serif CJK SC', SimSun, serif",
+      '--dsw-font-markdown-h4': "600 16px/28px 'Anthropic Serif', Georgia, 'Songti SC', 'Noto Serif CJK SC', SimSun, serif",
+      '--dsw-font-markdown-base': "16px/28px 'Anthropic Serif', Georgia, 'Songti SC', 'Noto Serif CJK SC', SimSun, serif",
+      '--dsw-font-markdown-base-strong': "600 16px/28px 'Anthropic Serif', Georgia, 'Songti SC', 'Noto Serif CJK SC', SimSun, serif",
+      '--dsw-font-markdown-base-italic': "italic 16px/28px 'Anthropic Serif', Georgia, 'Songti SC', 'Noto Serif CJK SC', SimSun, serif",
+      '--dsw-font-markdown-base-strong-italic': "italic 600 16px/28px 'Anthropic Serif', Georgia, 'Songti SC', 'Noto Serif CJK SC', SimSun, serif",
+      '--dsw-alias-brand-primary': '#D97757',
+      '--dsw-alias-brand-text': '#B95C3E',
+      '--dsw-alias-button-primary-fill': '#D97757',
+      '--dsw-alias-button-primary-hover': '#C9684B',
+      '--dsw-alias-button-elevated-fill': '#FFFDFC',
+      '--dsw-alias-button-floating-fill': '#FFFDFC',
+      '--dsw-alias-button-floating-hover': '#F0E9E2',
+      '--dsw-alias-button-info-fill': '#C96B4A',
+      '--dsw-alias-button-info-hover': '#B95C3E',
+      '--dsw-alias-interactive-bg-hover': 'rgba(217, 119, 87, 0.08)',
+      '--dsw-alias-interactive-bg-hover-accent': 'rgba(217, 119, 87, 0.12)',
+      '--dsw-alias-interactive-bg-active': 'rgba(217, 119, 87, 0.16)',
+      '--dsw-alias-interactive-bg-hover-solid': '#F0E9E2',
+      '--dsw-alias-state-error-primary': '#C85A4A',
+      '--dsw-alias-state-success-primary': '#5F8A68',
+      '--dsw-alias-state-warn-primary': '#B98242',
+      '--dsw-alias-tooltip-bg': '#3B332D',
+      '--dsw-specific-sidebar-fill': '#EFE8E0',
+      '--dsw-specific-input-major': '#FFFDFC',
+      '--dsw-specific-menu': '#FFFDFC',
+      '--dsw-specific-selector': '#EFE8E0',
+      '--dsw-specific-tip': '#F0E9E2',
+      '--dsw-specific-bubble': '#F4EEE8',
+      '--dsw-specific-bubble-highlight': '#E7D6C8',
+      '--dsw-alias-markdown-code-block': '#2F2924',
+      '--dsw-alias-markdown-code-block-banner': '#ECE5DD',
+      '--dsw-alias-markdown-inline-code': '#E8DDD3',
+      '--shiki-foreground': '#F5EFE8',
+      '--shiki-background': '#2F2924',
+      '--shiki-token-constant': '#82C4FF',
+      '--shiki-token-string': '#A9D39A',
+      '--shiki-token-comment': '#B5A99F',
+      '--shiki-token-keyword': '#FF8FA8',
+      '--shiki-token-parameter': '#FFB66E',
+      '--shiki-token-function': '#D6B4FF',
+      '--shiki-token-string-expression': '#B8DFA8',
+      '--shiki-token-punctuation': '#E7D8CB',
+      '--shiki-token-link': '#8CC8FF',
+      '--dsw-alias-scrollbar-bg-l1': '#D4C8BD',
+      '--dsw-alias-scrollbar-bg-l2': '#BDAEA1',
+      '--dsw-alias-scrollbar-hover-l1': '#BDAEA1',
+      '--dsw-alias-scrollbar-hover-l2': '#9F8E80',
+    }),
+  }),
 ])
 
 const BUILTIN_INSPECT_TOKENS: readonly ThemeTokenInspection[] = Object.freeze([
@@ -134,11 +207,13 @@ const BUILTIN_INSPECT_TOKENS: readonly ThemeTokenInspection[] = Object.freeze([
   { name: '--dsw-alias-state-success-primary', description: 'Primary success state color.', valueType: 'CSS color', requiresLightAndDark: true, cssVariable: '--dsw-alias-state-success-primary' },
   { name: '--dsw-alias-state-warn-primary', description: 'Primary warning state color.', valueType: 'CSS color', requiresLightAndDark: true, cssVariable: '--dsw-alias-state-warn-primary' },
   { name: '--dsw-specific-sidebar-fill', description: 'Sidebar column and title-row background.', valueType: 'CSS color', requiresLightAndDark: true, cssVariable: '--dsw-specific-sidebar-fill' },
+  { name: '--dsw-alias-brand-text', description: 'Theme brand text accent.', valueType: 'CSS color', requiresLightAndDark: true, cssVariable: '--dsw-alias-brand-text' },
+  { name: '--dsw-specific-bubble', description: 'Conversation bubble background.', valueType: 'CSS color', requiresLightAndDark: true, cssVariable: '--dsw-specific-bubble' },
 ])
 
 /**
- * Theme registry and preference owner. `light`/`dark` are built in (the base
- * stylesheets carry both palettes); third-party themes register alias-layer
+ * Theme registry and preference owner. `light`/`dark` are base palettes and
+ * `claude` is a built-in warm light theme; third-party themes register alias-layer
  * overrides. Reads go through {@link getTheme}; preference writes only
  * through {@link setTheme}; continuous sync only through the `theme/change`
  * event. {@link overrideTokens} stacks partial token layers over the active

@@ -644,17 +644,21 @@ Source: [`packages/goal/goal/src/index.ts:116`](../packages/goal/goal/src/index.
 
 ## `@deepseek-ai/dsh-h-model-routing`
 
-Requires: `agents` · `llm`
+Requires: `agents` · `llm` · `subagents`
 
 ```ts config-catalog
-/** Deployment-owned routing presentation options. */
+/** Deployment-owned routing and parallel-scheduling options. */
 export interface Config {
   /** Whether H plan snapshots also write the legacy shared todo projection. */
   emitTodoMirror: boolean
+  /** Maximum ready DAG nodes that may classify and run concurrently. */
+  maxConcurrentSubtasks: number
+  /** Registered one-shot subagent provider for isolated DAG workers. */
+  subagentProvider: string
 }
 ```
 
-Source: [`packages/model-routing/h-model-routing/src/index.ts:90`](../packages/model-routing/h-model-routing/src/index.ts)
+Source: [`packages/model-routing/h-model-routing/src/index.ts:80`](../packages/model-routing/h-model-routing/src/index.ts)
 
 <a id="deepseek-aidsh-headless"></a>
 

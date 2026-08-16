@@ -232,14 +232,14 @@ export class ReactLoopAgent implements Agent {
     const sections = renderContextSections(assembly)
     const context = this.runtimeContext.project(joinContextSections(sections), sections)
     const decision = await this.dispatch.waterfall(
-      'agent/pre-step', { messages: claimed, ...position, signal },
+      'agent/pre-step', { messages: claimed, assembly, ...position, signal },
       (): Promise<PreStepDecision> => Promise.resolve<PreStepDecision>({
         kind: 'enter',
         messages: context === undefined ? claimed : [...claimed, context],
       }),
     )
     signal.throwIfAborted()
-    return decision.kind === 'reject' ? decision : { ...decision, assembly }
+    return decision.kind === 'reject' ? decision : { ...decision, assembly: decision.assembly ?? assembly }
   }
 
   /** Open one turn before claiming its first proposed step. */

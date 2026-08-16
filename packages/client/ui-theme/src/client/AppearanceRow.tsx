@@ -7,7 +7,7 @@
  */
 import clsx from 'clsx'
 import {
-  IconDarkOutline16, IconFollowsystemOutline16, IconLightOutline16,
+  IconDarkOutline16, IconFollowsystemOutline16, IconLightOutline16, IconSparkle16,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ThemePreference } from '../theme-settings.ts'
@@ -27,10 +27,11 @@ export type AppearanceRowComponentProps =
   PropsRuntime<'settings.general.item'> & PropsStore<ReturnType<typeof createAppearanceRowStore>>
   & PropsLocale<'settings.theme'> & AppearanceRowInjected
 
-/** Cube order and icons (figma 501:30015-30017: Light, Dark, System). */
+/** Cube order and icons (Light, Dark, Claude, System). */
 const CUBES: readonly { id: ThemePreference; labelKey: ThemeKey; Icon: typeof IconLightOutline16 }[] = [
   { id: 'light', labelKey: 'appearance.light', Icon: IconLightOutline16 },
   { id: 'dark', labelKey: 'appearance.dark', Icon: IconDarkOutline16 },
+  { id: 'claude', labelKey: 'appearance.claude', Icon: IconSparkle16 },
   { id: 'system', labelKey: 'appearance.system', Icon: IconFollowsystemOutline16 },
 ]
 
@@ -50,6 +51,7 @@ export function AppearanceRow({ t, setTheme, useStore }: AppearanceRowComponentP
             key={id}
             type="button"
             className={clsx(css.themeCube, preference === id && css.selected)}
+            data-theme={id}
             aria-pressed={preference === id}
             onClick={() => { setTheme(id) }}
           >

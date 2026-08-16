@@ -1,44 +1,27 @@
 /**
- * Host-side durable H-routing plan vocabulary, strict replay fold, and
- * transition validation. The log carries complete snapshots; this module only
- * derives `interrupted` from an unfinished plan's enclosing `turn/end`.
+ * Durable H-routing DAG vocabulary, replay fold, and transition validation.
+ * The log carries complete snapshots; this module derives `interrupted` only
+ * when an unfinished plan's enclosing turn ends unsuccessfully.
  * @module @deepseek-ai/dsh-h-model-routing/domain
  */
 
 import { z as zod } from 'zod'
 import type { ZodType } from 'zod'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import type {
-  HPlanId as HPlanIdType,
-  HPlanPhase,
-  HPlanProjection,
-  HPlanSubtaskStatus,
-} from './types.ts'
+import { MAX_H_PLAN_SUBTASK_TITLE_LENGTH } from './constants.ts'
+import type { HPlanId as HPlanIdType, HPlanPhase, HPlanProjection, HPlanSubtaskBehavior, HPlanSubtaskStatus } from './types.ts'
 
 /** One complete durable state value carried by `h-model-routing/state`. */
 export type HPlanState = HPlanProjection | null
 
-declare module '@deepseek-ai/dsh-session/types' {
-  interface SessionEventMap {
-    /** Complete current H-routing plan snapshot, or null when a fresh task clears the prior plan. */
-    'h-model-routing/state': HPlanState
-  }
-}
-
-const PHASES = [
-  'planning',
-  'executing',
-  'summarizing',
-  'completed',
-  'failed',
-  'interrupted',
-] as const satisfies readonly HPlanPhase[]
-
-const STATUSES = ['pending', 'in_progress', 'completed'] as const satisfies readonly HPlanSubtaskStatus[]
+const PHASES = ['planning', 'executing', 'summarizing', 'completed', 'failed', 'interrupted'] as const satisfies readonly HPlanPhase[]
+const STATUSES = ['pending', 'in_progress', 'completed', 'failed', 'blocked'] as const satisfies readonly HPlanSubtaskStatus[]
+const ROUTES = ['light', 'expert'] as const
+const BEHAVIORS = ['spec', 'react', 'weak'] as const satisfies readonly HPlanSubtaskBehavior[]
 
 /**
  * Brand a generated plan id at the package's host-side construction point.
- * @param id - generated opaque identifier text.
+ * @param id - generated opaque identifier.
  * @returns the branded plan identifier.
  */
 export function HPlanId(id: string): HPlanIdType {
@@ -52,8 +35,17 @@ const normalizedString = zod.string().refine(
 )
 
 const subtaskSchema = zod.object({
-  text: normalizedString,
+  id: zod.number().int().positive(),
+  title: zod.string().max(MAX_H_PLAN_SUBTASK_TITLE_LENGTH).refine(
+    value => value.trim().length > 0 && value === value.trim(),
+    'must be a non-empty normalized title',
+  ),
+  instruction: normalizedString,
+  dependsOn: zod.array(zod.number().int().positive()).max(7),
   status: zod.enum(STATUSES),
+  route: zod.enum(ROUTES).optional(),
+  behavior: zod.enum(BEHAVIORS).optional(),
+  sessionId: normalizedString.optional(),
 }).strict()
 
 const rawPlanSchema = zod.object({
@@ -65,12 +57,32 @@ const rawPlanSchema = zod.object({
   failure: normalizedString.optional(),
 }).strict()
 
-/** Add the lifecycle-specific whole-snapshot rules that field schemas cannot express. */
+type SnapshotSubtask = zod.infer<typeof subtaskSchema>
+
+/** Validate contiguous ids and topological dependency references. */
+function validateDag(subtasks: readonly SnapshotSubtask[], invalid: (message: string) => void): void {
+  for (let index = 0; index < subtasks.length; index++) {
+    const subtask = subtasks[index]
+    if (subtask === undefined) continue
+    if (subtask.id !== index + 1) invalid('subtask ids must be contiguous and in topological order')
+    const dependencies = new Set<number>()
+    for (const dependency of subtask.dependsOn) {
+      if (dependency >= subtask.id) invalid('subtask dependencies must name an earlier task id')
+      if (dependencies.has(dependency)) invalid('subtask dependencies must not repeat an id')
+      dependencies.add(dependency)
+    }
+  }
+}
+
+/** Whether a node no longer needs scheduler work. */
+function isTerminal(status: HPlanSubtaskStatus): boolean {
+  return status === 'completed' || status === 'failed' || status === 'blocked'
+}
+
+/** Add lifecycle-specific whole-snapshot rules that field schemas cannot express. */
 function validateSnapshot(snapshot: zod.infer<typeof rawPlanSchema>, ctx: zod.RefinementCtx): void {
   const { phase, subtasks, failure } = snapshot
-  const invalid = (message: string): void => {
-    ctx.addIssue({ code: 'custom', message })
-  }
+  const invalid = (message: string): void => { ctx.addIssue({ code: 'custom', message }) }
   switch (phase) {
     case 'planning':
       if (subtasks.length !== 0) invalid('planning state must not contain subtasks')
@@ -83,44 +95,23 @@ function validateSnapshot(snapshot: zod.infer<typeof rawPlanSchema>, ctx: zod.Re
     case 'executing':
       if (subtasks.length < 2) invalid('executing state requires 2 to 8 subtasks')
       if (failure !== undefined) invalid('executing state must not contain failure detail')
-      validateExecutionOrder(subtasks, true, invalid)
+      validateDag(subtasks, invalid)
       return
     case 'summarizing':
     case 'completed':
       if (subtasks.length < 2) invalid(`${phase} state requires 2 to 8 subtasks`)
       if (failure !== undefined) invalid(`${phase} state must not contain failure detail`)
-      if (subtasks.some(subtask => subtask.status !== 'completed')) {
-        invalid(`${phase} state requires every subtask to be completed`)
-      }
+      validateDag(subtasks, invalid)
+      if (subtasks.some(subtask => !isTerminal(subtask.status))) invalid(`${phase} state requires every subtask to be terminal`)
       return
     case 'interrupted':
       if (failure !== undefined) invalid('interrupted state must not contain failure detail')
-      if (subtasks.length !== 0 && subtasks.length < 2) {
-        invalid('interrupted state contains either no subtasks or 2 to 8 subtasks')
-      }
-      validateExecutionOrder(subtasks, false, invalid)
+      if (subtasks.length !== 0 && subtasks.length < 2) invalid('interrupted state contains either no subtasks or 2 to 8 subtasks')
+      validateDag(subtasks, invalid)
       return
     default:
       phase satisfies never
   }
-}
-
-/** Validate ordered sequential statuses, optionally requiring an active item. */
-function validateExecutionOrder(
-  subtasks: readonly zod.infer<typeof subtaskSchema>[],
-  requireActive: boolean,
-  invalid: (message: string) => void,
-): void {
-  let stage = 0
-  let active = 0
-  for (const subtask of subtasks) {
-    const next = subtask.status === 'completed' ? 0 : subtask.status === 'in_progress' ? 1 : 2
-    if (next < stage) invalid('subtask statuses must stay in sequential completed, in_progress, pending order')
-    stage = Math.max(stage, next)
-    if (subtask.status === 'in_progress') active++
-  }
-  if (active > 1) invalid('plan may have at most one in-progress subtask')
-  if (requireActive && active !== 1) invalid('executing state requires exactly one in-progress subtask')
 }
 
 /** Wire schema shared by the projection registry and strict replay decoder. */
@@ -131,9 +122,8 @@ export const hPlanStateSchema: ZodType<HPlanState> = zod.union([
 
 /**
  * Decode and validate one durable H-routing plan snapshot.
- * @param value - persisted event payload.
- * @returns the validated plan snapshot or clear tombstone.
- * @throws {Error} when the payload violates the persisted plan vocabulary.
+ * @param value - untrusted persisted event payload.
+ * @returns the validated plan snapshot or clear value.
  */
 export function decodeHPlanState(value: unknown): HPlanState {
   const parsed = hPlanStateSchema.safeParse(value)
@@ -153,36 +143,77 @@ function requireSamePlan(previous: HPlanProjection, next: HPlanProjection): void
   }
 }
 
-/** Assert planner text is stable once execution has started. */
+/** Assert that planner DAG data is immutable once execution starts. */
 function requireSameSubtasks(previous: HPlanProjection, next: HPlanProjection): void {
-  if (previous.subtasks.length !== next.subtasks.length
-    || previous.subtasks.some((subtask, index) => subtask.text !== next.subtasks[index]?.text)) {
-    throw new Error('h-model-routing state transition changes planned subtask text or order')
+  if (previous.subtasks.length !== next.subtasks.length || previous.subtasks.some((subtask, index) => {
+    const candidate = next.subtasks[index]
+    return candidate === undefined || subtask.id !== candidate.id || subtask.title !== candidate.title
+      || subtask.instruction !== candidate.instruction
+      || subtask.dependsOn.length !== candidate.dependsOn.length
+      || subtask.dependsOn.some((dependency, dependencyIndex) => dependency !== candidate.dependsOn[dependencyIndex])
+  })) throw new Error('h-model-routing state transition changes planned subtask DAG')
+}
+
+/** Allow a child session id to appear once after provider publication and never change or disappear. */
+function requireForwardSession(previous: HPlanProjection, next: HPlanProjection): void {
+  for (let index = 0; index < previous.subtasks.length; index++) {
+    const before = previous.subtasks[index]
+    const after = next.subtasks[index]
+    if (before === undefined || after === undefined) throw new Error('plan subtask sequence unexpectedly changed')
+    if (before.sessionId !== undefined && before.sessionId !== after.sessionId) {
+      throw new Error('h-model-routing state transition changes or removes a published child session id')
+    }
+    if (before.sessionId === undefined && after.sessionId !== undefined && before.status !== 'in_progress') {
+      throw new Error('h-model-routing state transition publishes a child session before task admission')
+    }
   }
 }
 
-/** Numeric ordering of a subtask's only allowed forward states. */
-function statusRank(status: HPlanSubtaskStatus): number {
-  switch (status) {
-    case 'pending': return 0
-    case 'in_progress': return 1
-    case 'completed': return 2
-    default:
-      status satisfies never
-      return 0
+/** Allow a selected tier to appear once after admission and never change or disappear. */
+function requireForwardRoute(previous: HPlanProjection, next: HPlanProjection): void {
+  for (let index = 0; index < previous.subtasks.length; index++) {
+    const before = previous.subtasks[index]
+    const after = next.subtasks[index]
+    if (before === undefined || after === undefined) throw new Error('plan subtask sequence unexpectedly changed')
+    if (before.route !== undefined && before.route !== after.route) {
+      throw new Error('h-model-routing state transition changes or removes a selected subtask route')
+    }
+    if (before.route === undefined && after.route !== undefined && before.status !== 'in_progress') {
+      throw new Error('h-model-routing state transition selects a subtask route before task admission')
+    }
   }
 }
 
-/** Reject progress snapshots that resurrect an already advanced subtask. */
+/** Allow a selected work style to appear once after admission and never change or disappear. */
+function requireForwardBehavior(previous: HPlanProjection, next: HPlanProjection): void {
+  for (let index = 0; index < previous.subtasks.length; index++) {
+    const before = previous.subtasks[index]
+    const after = next.subtasks[index]
+    if (before === undefined || after === undefined) throw new Error('plan subtask sequence unexpectedly changed')
+    if (before.behavior !== undefined && before.behavior !== after.behavior) {
+      throw new Error('h-model-routing state transition changes or removes a selected subtask behavior')
+    }
+    if (before.behavior === undefined && after.behavior !== undefined && before.status !== 'in_progress') {
+      throw new Error('h-model-routing state transition selects a subtask behavior before task admission')
+    }
+  }
+}
+
+/** Assert the one-way state transition for a scheduler-owned node. */
+function requireForwardStatus(before: HPlanSubtaskStatus, after: HPlanSubtaskStatus): void {
+  if (before === after) return
+  if (before === 'pending' && (after === 'in_progress' || after === 'blocked')) return
+  if (before === 'in_progress' && (after === 'completed' || after === 'failed')) return
+  throw new Error('h-model-routing state transition moves subtask progress backwards or across an invalid terminal state')
+}
+
+/** Reject progress snapshots that mutate scheduler-owned task state illegally. */
 function requireMonotonicProgress(previous: HPlanProjection, next: HPlanProjection): void {
   for (let index = 0; index < previous.subtasks.length; index++) {
     const before = previous.subtasks[index]
     const after = next.subtasks[index]
-    /* v8 ignore next -- requireSameSubtasks establishes matching array lengths first. */
     if (before === undefined || after === undefined) throw new Error('plan subtask sequence unexpectedly changed')
-    if (statusRank(after.status) < statusRank(before.status)) {
-      throw new Error('h-model-routing state transition moves subtask progress backwards')
-    }
+    requireForwardStatus(before.status, after.status)
   }
 }
 
@@ -190,30 +221,28 @@ function requireMonotonicProgress(previous: HPlanProjection, next: HPlanProjecti
 function validateTransition(previous: HPlanState, next: HPlanState): void {
   if (next === null) return
   if (previous === null) {
-    if (next.phase !== 'planning') {
-      throw new Error('h-model-routing state may begin only with planning')
-    }
+    if (next.phase !== 'planning') throw new Error('h-model-routing state may begin only with planning')
     return
   }
   requireSamePlan(previous, next)
   switch (previous.phase) {
     case 'planning':
-      if (next.phase !== 'executing' && next.phase !== 'failed' && next.phase !== 'interrupted') {
-        throw new Error(`h-model-routing planning cannot transition to ${next.phase}`)
-      }
+      if (next.phase !== 'executing' && next.phase !== 'failed' && next.phase !== 'interrupted') throw new Error(`h-model-routing planning cannot transition to ${next.phase}`)
       return
     case 'executing':
-      if (next.phase !== 'executing' && next.phase !== 'summarizing' && next.phase !== 'interrupted') {
-        throw new Error(`h-model-routing executing cannot transition to ${next.phase}`)
-      }
+      if (next.phase !== 'executing' && next.phase !== 'summarizing' && next.phase !== 'interrupted') throw new Error(`h-model-routing executing cannot transition to ${next.phase}`)
       requireSameSubtasks(previous, next)
       requireMonotonicProgress(previous, next)
+      requireForwardRoute(previous, next)
+      requireForwardBehavior(previous, next)
+      requireForwardSession(previous, next)
       return
     case 'summarizing':
-      if (next.phase !== 'completed' && next.phase !== 'interrupted') {
-        throw new Error(`h-model-routing summarizing cannot transition to ${next.phase}`)
-      }
+      if (next.phase !== 'completed' && next.phase !== 'interrupted') throw new Error(`h-model-routing summarizing cannot transition to ${next.phase}`)
       requireSameSubtasks(previous, next)
+      requireForwardRoute(previous, next)
+      requireForwardBehavior(previous, next)
+      requireForwardSession(previous, next)
       return
     case 'completed':
     case 'failed':
@@ -231,19 +260,24 @@ function interrupted(state: HPlanProjection): HPlanProjection {
     turn: state.turn,
     task: state.task,
     phase: 'interrupted',
-    subtasks: state.subtasks.map(subtask => ({ text: subtask.text, status: subtask.status })),
+    subtasks: state.subtasks.map(subtask => ({
+      id: subtask.id,
+      title: subtask.title,
+      instruction: subtask.instruction,
+      dependsOn: [...subtask.dependsOn],
+      status: subtask.status,
+      ...(subtask.route === undefined ? {} : { route: subtask.route }),
+      ...(subtask.behavior === undefined ? {} : { behavior: subtask.behavior }),
+      ...(subtask.sessionId === undefined ? {} : { sessionId: subtask.sessionId }),
+    })),
   }
 }
 
 /**
- * Apply one session event to an H-routing projection state. A normal snapshot
- * event carries the full replacement; an enclosing terminal boundary turns an
- * unfinished snapshot into `interrupted`, which prevents cold resume from
- * silently continuing work.
- * @param state - projection value before the event.
+ * Apply one session event to an H-routing projection state.
+ * @param state - projection state before the event.
  * @param event - next durable session event.
- * @returns the projection value after the event.
- * @throws {Error} when a snapshot or state transition is invalid.
+ * @returns projection state after the event.
  */
 export function applyHPlanEvent(state: HPlanState, event: SessionEvent): HPlanState {
   if (event.type === 'h-model-routing/state') {
@@ -252,17 +286,14 @@ export function applyHPlanEvent(state: HPlanState, event: SessionEvent): HPlanSt
     return next
   }
   if (event.type === 'turn/end' && event.data.reason.kind !== 'completed'
-    && state !== null && isLivePhase(state.phase) && event.data.turn === state.turn) {
-    return interrupted(state)
-  }
+    && state !== null && isLivePhase(state.phase) && event.data.turn === state.turn) return interrupted(state)
   return state
 }
 
 /**
  * Fold a contiguous log prefix into its current durable H-routing plan.
- * @param events - ordered session-event prefix.
- * @returns the current plan snapshot or clear state.
- * @throws {Error} when the H-routing state stream is invalid.
+ * @param events - ordered session events to replay.
+ * @returns the current plan projection after replay.
  */
 export function foldHPlan(events: readonly SessionEvent[]): HPlanState {
   let state: HPlanState = null

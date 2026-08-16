@@ -38,7 +38,11 @@ export interface ModelOption {
   efforts: readonly { id: string; name: string; description?: string }[]
 }
 
-/** Flatten the catalog into selectable rows with stable opaque ids. */
+/**
+ * Flatten the catalog into selectable rows with stable opaque ids.
+ * @param groups - provider-grouped model catalog.
+ * @returns selectable model rows in catalog order.
+ */
 export function modelOptions(groups: readonly ModelProviderGroup[]): ModelOption[] {
   const rows: ModelOption[] = []
   groups.forEach((group, groupIndex) => {
@@ -48,7 +52,7 @@ export function modelOptions(groups: readonly ModelProviderGroup[]): ModelOption
         provider: group.id,
         model: model.id,
         name: model.name,
-        providerName: group.name ?? group.id,
+        providerName: group.name,
         efforts: model.reasoning?.efforts ?? [],
       })
     })
@@ -148,6 +152,7 @@ export class ModelRoutingSettingsStore {
    * Write one batch of field ops and adopt the acknowledged view. A rejected
    * or rejected-by-transport write reloads so the page never shows a value the
    * host does not have.
+   * @param ops - field mutations to apply atomically.
    * @returns the failure message, or undefined once the write landed.
    */
   async write(ops: readonly SettingsPathOpView[]): Promise<string | undefined> {

@@ -6,6 +6,7 @@
  */
 
 import type { Branded } from '@deepseek-ai/dsh-brand'
+import type { SessionId } from '@deepseek-ai/dsh-session'
 
 /** Identifies one durable H-routing plan across all of its snapshots. */
 export type HPlanId = Branded<'HPlanId'>
@@ -19,15 +20,37 @@ export type HPlanPhase =
   | 'failed'
   | 'interrupted'
 
-/** The visible state of one sequential planner-produced subtask. */
-export type HPlanSubtaskStatus = 'pending' | 'in_progress' | 'completed'
+/** The visible state of one planner-produced DAG node. */
+export type HPlanSubtaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed' | 'blocked'
 
-/** One ordered planner-produced subtask in the current plan snapshot. */
-export interface HPlanSubtask {
-  /** The planner's self-contained instruction for this item. */
-  readonly text: string
-  /** Its current sequential execution state. */
+/** Model tier selected by level-2 routing for one admitted DAG node. */
+export type HPlanSubtaskRoute = 'light' | 'expert'
+
+/** Work style selected with the model tier for one admitted DAG node. */
+export type HPlanSubtaskBehavior = 'spec' | 'react' | 'weak'
+
+/** One planner-produced task before the scheduler assigns its live status. */
+export interface HPlanTask {
+  /** Human-visible, one-based task number in the planner's topological order. */
+  readonly id: number
+  /** Concise human-visible label for list and graph navigation. */
+  readonly title: string
+  /** The planner's complete self-contained execution instruction. */
+  readonly instruction: string
+  /** Task numbers that must complete before this task may start. */
+  readonly dependsOn: readonly number[]
+}
+
+/** One planner-produced DAG node in the current plan snapshot. */
+export interface HPlanSubtask extends HPlanTask {
+  /** The scheduler's current execution state. */
   readonly status: HPlanSubtaskStatus
+  /** Selected tier after level-2 assessment; absent before routing. */
+  readonly route?: HPlanSubtaskRoute
+  /** Selected work style after level-2 assessment; absent when behavior routing is disabled or unavailable. */
+  readonly behavior?: HPlanSubtaskBehavior
+  /** Published one-shot child session after the provider accepts this node. */
+  readonly sessionId?: SessionId
 }
 
 /**
@@ -47,6 +70,13 @@ export interface HPlanProjection {
   readonly subtasks: readonly HPlanSubtask[]
   /** Stable human-readable planner failure detail, present only when failed. */
   readonly failure?: string
+}
+
+declare module '@deepseek-ai/dsh-session/types' {
+  interface SessionEventMap {
+    /** Complete current H-routing plan snapshot, or null when a fresh task clears the prior plan. */
+    'h-model-routing/state': HPlanProjection | null
+  }
 }
 
 declare module '@deepseek-ai/dsh-session-projection/types' {

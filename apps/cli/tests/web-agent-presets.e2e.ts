@@ -184,10 +184,10 @@ describe('the shipped Web composition', () => {
     }
   })
 
-  it('supplies both shipped presets, and only those, from the system root', async () => {
+  it('supplies the shipped presets, and only those, from the system root', async () => {
     const listed = await ctx.agentPresets.list()
 
-    expect(listed.map(preset => preset.id).sort()).toEqual(['code', 'cordis', 'minimal', 'standard'])
+    expect(listed.map(preset => preset.id).sort()).toEqual(['anchored-standard', 'code', 'cordis', 'minimal', 'standard'])
     expect(listed.every(preset => preset.trust === 'system')).toBe(true)
     expect(ctx.agentPresets.defaultId).toBe('standard')
   })
@@ -232,6 +232,40 @@ describe('the shipped Web composition', () => {
       expect(handle.agent.ctx.get('compaction')).toBeUndefined()
     } finally {
       await handle.dispose()
+    }
+  })
+
+  it('anchors the root catalog while leaving delegated agents fully equipped', async () => {
+    const root = await ctx.agents.create({
+      sessionId: SessionId(`preset-anchored-standard-root-${randomUUID()}`),
+      setup: agentCtx => ctx.agentPresets.mount(agentCtx, 'anchored-standard').then(() => undefined),
+    })
+    const child = await ctx.agents.create({
+      sessionId: SessionId(`preset-anchored-standard-child-${randomUUID()}`),
+      meta: childSessionMeta(root.agent, 1, 0),
+      setup: agentCtx => ctx.agentPresets.mount(agentCtx, 'anchored-standard').then(() => undefined),
+    })
+    try {
+      const rootAssembly = await ctx.systemPrompt.assemble({ agent: root.agent, scope: root.agent })
+      const childAssembly = await ctx.systemPrompt.assemble({ agent: child.agent, scope: child.agent })
+      expect(rootAssembly.sections).toEqual([{ name: 'deployment:persona', text: MINIMAL_PROMPT }])
+      expect(rootAssembly.tools.map(tool => tool.name).sort()).toEqual(['bash', 'str_replace_editor'])
+      expect(childAssembly.tools.map(tool => tool.name)).toContain('subagent')
+      expect(childAssembly.tools.length).toBeGreaterThan(10)
+      if (process.platform === 'win32') {
+        const bash = await ctx.tools.execute({
+          callId: CallId(`preset-anchored-standard-bash-${randomUUID()}`),
+          name: 'bash',
+          arguments: { command: 'printf anchored-ok' },
+          signal: new AbortController().signal,
+          agent: root.agent,
+        })
+        expect(bash.isError, JSON.stringify(bash)).toBe(false)
+        expect(JSON.stringify(bash.content)).toContain('anchored-ok')
+      }
+    } finally {
+      await child.dispose()
+      await root.dispose()
     }
   })
 

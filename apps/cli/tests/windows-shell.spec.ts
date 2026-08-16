@@ -134,4 +134,25 @@ describe('shipped agent presets gate both shell tools by platform', () => {
       )), `${id} must be absent from minimal`).toBe(false)
     }
   })
+
+  it('anchored-standard selects exactly one Minimal-compatible bash implementation', () => {
+    const entries: unknown = yaml.load(
+      readFileSync(join(presetRoot, 'anchored-standard', 'agent.cordis.yml'), 'utf8'),
+      { schema: entryListSchema },
+    )
+    if (!Array.isArray(entries)) throw new TypeError('anchored-standard preset must parse to an entry array')
+    const persistent = entries.find(entry => (
+      typeof entry === 'object' && entry !== null && (entry as Record<string, unknown>).id === 'persistent-shell'
+    )) as { disabled?: { __jsExpr?: string } } | undefined
+    const custom = entries.find(entry => (
+      typeof entry === 'object' && entry !== null && (entry as Record<string, unknown>).id === 'custom-bash'
+    )) as { disabled?: { __jsExpr?: string } } | undefined
+    if (persistent?.disabled?.__jsExpr === undefined || custom?.disabled?.__jsExpr === undefined) {
+      throw new TypeError('anchored-standard bash rows must carry platform expressions')
+    }
+    expect(Boolean(evaluate({ process: { platform: 'win32' } }, persistent.disabled.__jsExpr))).toBe(true)
+    expect(Boolean(evaluate({ process: { platform: 'linux' } }, persistent.disabled.__jsExpr))).toBe(false)
+    expect(Boolean(evaluate({ process: { platform: 'win32' } }, custom.disabled.__jsExpr))).toBe(false)
+    expect(Boolean(evaluate({ process: { platform: 'linux' } }, custom.disabled.__jsExpr))).toBe(true)
+  })
 })

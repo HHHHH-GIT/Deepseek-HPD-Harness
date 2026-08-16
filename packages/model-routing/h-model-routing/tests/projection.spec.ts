@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
+import SubagentRuntime from '@deepseek-ai/dsh-subagent'
 import { SettingsProvider } from '@deepseek-ai/dsh-settings'
 import type { SettingsNamespace } from '@deepseek-ai/dsh-settings'
 import { HPlanId, foldHPlan } from '../src/domain.ts'
@@ -38,7 +39,12 @@ async function harness(): Promise<{ ctx: Context; fiber: { dispose(): Promise<vo
   await mountAgentLoopTestDependencies(ctx)
   await ctx.plugin(MemorySettings)
   await ctx.plugin(SessionProjectionRegistry)
-  const fiber = await ctx.plugin(HRouting, { emitTodoMirror: false })
+  await ctx.plugin(SubagentRuntime)
+  const fiber = await ctx.plugin(HRouting, {
+    emitTodoMirror: false,
+    maxConcurrentSubtasks: 3,
+    subagentProvider: 'spawn',
+  })
   return { ctx, fiber }
 }
 
@@ -65,7 +71,7 @@ describe('H-routing plan projection', () => {
     expect(ctx.sessionProjections.snapshot(session).values.hModelRouting).toMatchObject({ phase: 'planning' })
     session.append('turn/end', { turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } })
     expect(ctx.sessionProjections.snapshot(session).values.hModelRouting).toMatchObject({ phase: 'interrupted' })
-    expect(changes.map(change => ({ key: change.key, phase: change.phase }))).toEqual([
+    expect(changes.filter(change => change.key === 'hModelRouting').map(change => ({ key: change.key, phase: change.phase }))).toEqual([
       { key: 'hModelRouting', phase: 'planning' },
       { key: 'hModelRouting', phase: 'interrupted' },
     ])

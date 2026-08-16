@@ -11,5 +11,5 @@ export const hModelRoutingProjectionDefinition: ProjectionDefinition<'hModelRout
   init: () => null,
   apply: applyHPlanEvent,
   view: state => state,
-  stateVersion: 1,
+  stateVersion: 2,
 }

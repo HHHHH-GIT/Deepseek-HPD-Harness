@@ -3,7 +3,7 @@
  * through `useProjection('hModelRouting')`; this plugin owns only local
  * disclosure state and no domain store, refresh path, or event listener.
  */
-import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ClientContext, ISessions } from '@deepseek-ai/dsh-client-runtime/client'
 // Type-only: pulls the hModelRouting SessionProjectionMap merge into the client program.
 import type {} from '@deepseek-ai/dsh-h-model-routing/client'
 // Type-only: pulls the conversation dock SlotMap declaration into the client program.
@@ -11,7 +11,9 @@ import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 // Type-only: pulls the locale service Context merge into the client program.
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { HPlanDock } from './HPlanPanel.tsx'
+import type { HPlanActions } from './HPlanPanel.tsx'
 import { en, NS, type HModelRoutingKey, zh } from './locales.ts'
+import { plannerPresentationDefinition } from './planner-presentation.ts'
 
 export type { HModelRoutingKey } from './locales.ts'
 
@@ -23,18 +25,26 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 }
 
 /** Services needed to register the panel and its dictionaries. */
-export const inject = ['slots', 'locale']
+export const inject = ['slots', 'locale', 'sessions', 'conversationEvents']
 
 /**
  * Register the projection-driven H plan dock.
  * @param ctx - client root context.
  */
 export function apply(ctx: ClientContext): void {
+  const sessions = ctx.get('sessions') as ISessions | undefined
+  if (sessions === undefined) throw new Error('ui-h-model-routing requires the client sessions service')
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-h-model-routing: dictionaries')
+  ctx.conversationEvents.register(plannerPresentationDefinition)
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
     name: 'conversation.input.dock',
     id: 'h-model-routing',
     order: 5,
     locale: NS,
+    inject: (parentSessionId): HPlanActions => ({
+      openSubtask(childSessionId) {
+        sessions.openSubagent({ parentSessionId, childSessionId, mode: 'one-shot' })
+      },
+    }),
   }, HPlanDock))
 }

@@ -1,6 +1,6 @@
 {
   "name": "@deepseek-ai/dsh-h-model-routing",
-  "description": "First-version hierarchical model routing: light/expert complexity-gated routing as an out-of-loop policy",
+  "description": "Hierarchical Light/Expert routing with durable DAG planning and bounded isolated subagent execution",
   "version": "0.1.0-rc.5",
   "publishConfig": {
     "access": "public"
@@ -53,6 +53,7 @@
     "@deepseek-ai/dsh-session": "workspace:^",
     "@deepseek-ai/dsh-session-projection": "workspace:^",
     "@deepseek-ai/dsh-settings": "workspace:^",
+    "@deepseek-ai/dsh-subagent": "workspace:^",
     "@deepseek-ai/schemastery": "workspace:^"
   },
   "devDependencies": {
@@ -67,6 +68,7 @@
     "@deepseek-ai/dsh-session": "workspace:^",
     "@deepseek-ai/dsh-session-projection": "workspace:^",
     "@deepseek-ai/dsh-settings": "workspace:^",
+    "@deepseek-ai/dsh-subagent": "workspace:^",
     "@deepseek-ai/dsh-system-prompt": "workspace:^",
     "@deepseek-ai/dsh-tools": "workspace:^",
     "@deepseek-ai/schemastery": "workspace:^"

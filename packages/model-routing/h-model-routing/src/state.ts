@@ -5,20 +5,29 @@
  * @module @deepseek-ai/dsh-h-model-routing/state
  */
 
-import type { HPlanProjection } from './types.ts'
+import type { SessionId } from '@deepseek-ai/dsh-session'
+import type { HPlanProjection, HPlanSubtaskBehavior, HPlanSubtaskRoute, HPlanTask, HPlanSubtaskStatus } from './types.ts'
 
 /** Which stage of the hierarchical flow owns the next steps. */
-export type HPhase = 'idle' | 'planning' | 'subtasks' | 'summarizing' | 'direct'
+export type HPhase = 'idle' | 'assessing' | 'planning' | 'subtasks' | 'summarizing' | 'direct'
 
 /** The model tier a routing decision selected. */
-export type HRouteKind = 'light' | 'expert'
+export type HRouteKind = HPlanSubtaskRoute
 
 /** One planner-produced subtask with its collected execution result. */
-export interface HSubtask {
-  /** The subtask text, verbatim from the parsed plan. */
-  text: string
-  /** The subtask step's final assistant text, captured at its turn-stop boundary. */
+export interface HSubtask extends HPlanTask {
+  /** The scheduler-owned live state, mirrored into every durable snapshot. */
+  status: HPlanSubtaskStatus
+  /** Tier selected by level-2 routing before the child provider starts. */
+  route?: HPlanSubtaskRoute
+  /** Work style selected with the tier before the child provider starts. */
+  behavior?: HPlanSubtaskBehavior
+  /** Published child session id used by the task graph navigation. */
+  sessionId?: SessionId
+  /** The isolated child agent's final assistant text. */
   result?: string
+  /** Stable failure summary captured when the child cannot complete. */
+  failure?: string
 }
 
 /** Mutable per-agent routing state, owned exclusively by the plugin. */
@@ -28,12 +37,8 @@ export interface HState {
   route: HRouteKind | undefined
   /** The original user task text that started the current cycle. */
   task: string
-  /** Planner-produced subtasks; empty until a plan parses. */
+  /** Planner-produced DAG nodes; empty until a plan parses. */
   subtasks: HSubtask[]
-  /** Index of the subtask the next step executes. */
-  index: number
-  /** Subtask whose level-2 verdict selected `route`; tool continuations reuse it. */
-  classifiedSubtaskIndex: number | undefined
   /** Latest durable plan snapshot while this process owns its active turn. */
   plan: HPlanProjection | undefined
 }
@@ -48,8 +53,6 @@ export function createHState(): HState {
     route: undefined,
     task: '',
     subtasks: [],
-    index: 0,
-    classifiedSubtaskIndex: undefined,
     plan: undefined,
   }
 }
@@ -63,7 +66,5 @@ export function resetHState(state: HState): void {
   state.route = undefined
   state.task = ''
   state.subtasks = []
-  state.index = 0
-  state.classifiedSubtaskIndex = undefined
   state.plan = undefined
 }

@@ -2,5 +2,5 @@
 # side as of the last confirmed-consistent state. Both languages carry equal authority;
 # after editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/client/ui-h-model-routing/README.md
-README.md: de210250b1b58b5e4e270576747841f148544f43
-README.zh.md: f98c9d944b077ef2ddb6b0722fad361f2f1ced70
+README.md: 1a0c0aea2b0bb4449feabacfcca454ea0ac7761f
+README.zh.md: 988e935dbf3c4d4b03e57cb30c1eaf60acc2201b

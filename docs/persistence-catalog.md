@@ -428,10 +428,10 @@ Source: [`packages/goal/goal/src/domain.ts:66`](../packages/goal/goal/src/domain
 
 ```ts persistence-catalog
 /** Complete current H-routing plan snapshot, or null when a fresh task clears the prior plan. */
-'h-model-routing/state': HPlanState
+'h-model-routing/state': HPlanProjection | null
 ```
 
-Source: [`packages/model-routing/h-model-routing/src/domain.ts:24`](../packages/model-routing/h-model-routing/src/domain.ts)
+Source: [`packages/model-routing/h-model-routing/src/types.ts:73`](../packages/model-routing/h-model-routing/src/types.ts)
 
 ### `hook/*`
 

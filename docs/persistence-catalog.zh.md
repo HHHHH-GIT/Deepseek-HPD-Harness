@@ -430,10 +430,10 @@ export type SessionEvent<T extends SessionEventType = SessionEventType> = {
 
 ```ts persistence-catalog
 /** Complete current H-routing plan snapshot, or null when a fresh task clears the prior plan. */
-'h-model-routing/state': HPlanState
+'h-model-routing/state': HPlanProjection | null
 ```
 
-来源：[`packages/model-routing/h-model-routing/src/domain.ts:24`](../packages/model-routing/h-model-routing/src/domain.ts)
+来源：[`packages/model-routing/h-model-routing/src/types.ts:73`](../packages/model-routing/h-model-routing/src/types.ts)
 
 ### `hook/*`
 

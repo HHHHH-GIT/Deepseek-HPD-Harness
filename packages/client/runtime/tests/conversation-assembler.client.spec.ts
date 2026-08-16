@@ -766,6 +766,37 @@ describe('ConversationNodeAssembler', () => {
       .toEqual(['turn:2', 'session'])
   })
 
+  it('treats a null event payload as coordinate-free during history replay', () => {
+    const definition: ConversationNodeDefinition<null> = {
+      kind: 'null-payload-probe',
+      match: event => (event.type as string) === 'h-model-routing/state'
+        ? { id: String(event.seq), role: 'start' }
+        : null,
+      start: () => null,
+      update: context => context.state,
+      target: 'chat',
+      buildViewNode: (context) => {
+        const location = context.start?.location
+        return node(context, location?.kind === 'step'
+          ? `step:${location.turn.turn}:${location.step.step}`
+          : location?.kind)
+      },
+    }
+    const assembler = new ConversationNodeAssembler(
+      new TestEventDefinitions([definition]),
+      new TestViewDefinitions([testView()]),
+    )
+
+    assembler.replaceWindow([
+      input(at(1, 'turn/start', { turn: 1 })),
+      input(at(2, 'step/start', { turn: 1, step: 1 })),
+      input(at(3, 'h-model-routing/state', null)),
+    ], false)
+    assembler.flush()
+
+    expect([...chatSnapshot(assembler)?.nodes.values() ?? []][0]?.data).toBe('step:1:1')
+  })
+
   it('assigns turn boundaries to the Turn even when a Step remains open', () => {
     const definition: ConversationNodeDefinition<null> = {
       kind: 'turn-boundary-probe',

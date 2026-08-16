@@ -39,6 +39,7 @@ function seedLog(): string {
     content: [{ type: 'text', text: TASK }],
     source: { kind: 'user' },
   }), { surfaceOp: 'append' })
+  session.append('h-model-routing/state', null)
   session.append('h-model-routing/state', {
     planId,
     turn: 1,
@@ -52,9 +53,9 @@ function seedLog(): string {
     task: TASK,
     phase: 'executing',
     subtasks: [
-      { text: 'Inspect the release checklist.', status: 'completed' },
-      { text: 'Validate the production rollout.', status: 'in_progress' },
-      { text: 'Write the handoff summary.', status: 'pending' },
+      { id: 1, title: 'Inspect release checklist', instruction: 'Inspect the complete release checklist.', dependsOn: [], status: 'completed' },
+      { id: 2, title: 'Validate production rollout', instruction: 'Validate the production rollout.', dependsOn: [], status: 'in_progress' },
+      { id: 3, title: 'Write handoff summary', instruction: 'Write the final handoff summary.', dependsOn: [1, 2], status: 'pending' },
     ],
   })
   session.append('turn/end', { turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } })
@@ -114,7 +115,7 @@ describe('web e2e: H routing plan without todo_write', () => {
     await scaffold?.close()
   })
 
-  it('folds the cold execution to interrupted and renders its sequential progress', async () => {
+  it('folds the cold execution to interrupted and renders its DAG progress', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-h-model-routing-plan'))
     const panel = page.locator('section[aria-label="Complex task plan"]')
     await panel.waitFor({ timeout: 15_000 })
@@ -125,6 +126,8 @@ describe('web e2e: H routing plan without todo_write', () => {
     await expect.poll(() => panel.locator('li[data-status="completed"]').count()).toBe(1)
     await expect.poll(() => panel.locator('li[data-status="in_progress"]').count()).toBe(1)
     await expect.poll(() => panel.locator('li[data-status="pending"]').count()).toBe(1)
+    await expect.poll(() => panel.getByRole('button', { name: 'List view' }).getAttribute('aria-pressed')).toBe('true')
+    await expect.poll(() => panel.getByRole('button', { name: 'Task graph view' }).getAttribute('aria-pressed')).toBe('false')
     await expect.poll(() => panel.getByText(TASK, { exact: false }).count()).toBe(1)
     expect(await page.locator('[data-testid="todo-panel"]').count()).toBe(0)
     expect(await page.locator('[data-tool="todo_write"]').count()).toBe(0)

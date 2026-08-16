@@ -17,8 +17,10 @@ export const en = {
   saving: 'Saving…',
 } as const
 
+/** English dictionary type used to require complete translations. */
 export type ModelKey = typeof en
 
+/** Simplified Chinese model-routing settings dictionary. */
 export const zh: { [Key in keyof typeof en]: string } = {
   nav: '模型路由',
   intro: 'DSH 会自动路由任务：简单任务由 Light 模型直接回答，复杂任务由 Expert 模型规划、Light 模型汇总。',

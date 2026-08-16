@@ -14,11 +14,16 @@
   - img
 - region "Complex task plan":
   - button "Collapse complex task plan" [expanded]: Complex Task Plan Interrupted 1/3 completed
+  - group "Complex task plan view":
+    - button "List view" [pressed]:
+      - img
+    - button "Task graph view":
+      - img
   - paragraph: TaskAudit the release path and prepare a safe rollout.
   - list:
-    - listitem: Inspect the release checklist. Completed
-    - listitem: Validate the production rollout. In progress
-    - listitem: Write the handoff summary. Pending
+    - listitem: Inspect release checklist Completed
+    - listitem: Validate production rollout In progress
+    - listitem: Write handoff summary Pending
 - textbox "Message the agent"
 - button "Commands":
   - img

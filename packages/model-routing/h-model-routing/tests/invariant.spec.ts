@@ -21,13 +21,19 @@ async function setup(): Promise<Context> {
   return ctx
 }
 
-function state(phase: HPlanProjection['phase'], statuses: readonly string[] = []): HPlanProjection {
+function state(phase: HPlanProjection['phase'], statuses: readonly HPlanProjection['subtasks'][number]['status'][] = []): HPlanProjection {
   return {
     planId: HPlanId('h-plan-invariant'),
     turn: 1,
     task: 'Refactor the project',
     phase,
-    subtasks: statuses.map((status, index) => ({ text: `Task ${index + 1}`, status })) as HPlanProjection['subtasks'],
+    subtasks: statuses.map((status, index) => ({
+      id: index + 1,
+      title: `Task ${index + 1}`,
+      instruction: `Complete task ${index + 1}.`,
+      dependsOn: index === 0 ? [] : [index],
+      status,
+    })),
     ...phase === 'failed' ? { failure: 'The planner request failed.' } : {},
   }
 }
@@ -44,24 +50,31 @@ describe('H-routing durable plan invariants', () => {
     ctx.emit('session/event', session, event(state('executing', ['in_progress', 'pending']), 1))
     ctx.emit('session/event', session, event(state('executing', ['completed', 'in_progress']), 2))
     ctx.emit('session/event', session, event(state('summarizing', ['completed', 'completed']), 3))
-    expect(() => ctx.emit('session/event', session, event(state('completed', ['completed', 'completed']), 4))).not.toThrow()
+    expect(() => { ctx.emit('session/event', session, event(state('completed', ['completed', 'completed']), 4)) }).not.toThrow()
   })
 
   it('rejects a state stream that starts execution without planning', async () => {
     const ctx = await setup()
-    expect(() => ctx.emit('session/event', Session.create(SessionId('h-plan-direct-execution')), event(
-      state('executing', ['in_progress', 'pending']),
-    ))).toThrow(/may begin only with planning/)
+    expect(() => {
+      ctx.emit('session/event', Session.create(SessionId('h-plan-direct-execution')), event(
+        state('executing', ['in_progress', 'pending']),
+      ))
+    }).toThrow(/may begin only with planning/)
   })
 
-  it('rejects an invalid ordered subtask snapshot', async () => {
+  it('rejects a subtask that depends on itself or a later task', async () => {
     const ctx = await setup()
     const session = Session.create(SessionId('h-plan-invalid-order'))
     ctx.emit('session/event', session, event(state('planning'), 0))
-    expect(() => ctx.emit('session/event', session, event(
-      state('executing', ['pending', 'in_progress']),
-      1,
-    ))).toThrow(/sequential completed, in_progress, pending order/)
+    expect(() => {
+      ctx.emit('session/event', session, event(
+        { ...state('executing', ['in_progress', 'pending']), subtasks: [
+          { id: 1, title: 'Task 1', instruction: 'Complete task 1.', dependsOn: [], status: 'in_progress' },
+          { id: 2, title: 'Task 2', instruction: 'Complete task 2.', dependsOn: [2], status: 'pending' },
+        ] },
+        1,
+      ))
+    }).toThrow(/dependencies must name an earlier task id/)
   })
 
   it('rejects an illegal terminal-state transition', async () => {
@@ -69,8 +82,46 @@ describe('H-routing durable plan invariants', () => {
     const session = Session.create(SessionId('h-plan-terminal'))
     ctx.emit('session/event', session, event(state('planning'), 0))
     ctx.emit('session/event', session, event(state('failed'), 1))
-    expect(() => ctx.emit('session/event', session, event(state('planning'), 2)))
+    expect(() => { ctx.emit('session/event', session, event(state('planning'), 2)) })
       .toThrow(/terminal failed state must be cleared/)
+  })
+
+  it('allows a route after admission and rejects changing it', async () => {
+    const ctx = await setup()
+    const session = Session.create(SessionId('h-plan-route'))
+    const admitted = state('executing', ['in_progress', 'pending'])
+    const routed = {
+      ...admitted,
+      subtasks: admitted.subtasks.map((subtask, index) => index === 0 ? { ...subtask, route: 'light' as const } : subtask),
+    }
+    ctx.emit('session/event', session, event(state('planning'), 0))
+    ctx.emit('session/event', session, event(admitted, 1))
+    ctx.emit('session/event', session, event(routed, 2))
+    expect(() => {
+      ctx.emit('session/event', session, event({
+        ...routed,
+        subtasks: routed.subtasks.map((subtask, index) => index === 0 ? { ...subtask, route: 'expert' as const } : subtask),
+      }, 3))
+    }).toThrow(/changes or removes a selected subtask route/)
+  })
+
+  it('allows a behavior after admission and rejects changing it', async () => {
+    const ctx = await setup()
+    const session = Session.create(SessionId('h-plan-behavior'))
+    const admitted = state('executing', ['in_progress', 'pending'])
+    const selected = {
+      ...admitted,
+      subtasks: admitted.subtasks.map((subtask, index) => index === 0 ? { ...subtask, behavior: 'spec' as const } : subtask),
+    }
+    ctx.emit('session/event', session, event(state('planning'), 0))
+    ctx.emit('session/event', session, event(admitted, 1))
+    ctx.emit('session/event', session, event(selected, 2))
+    expect(() => {
+      ctx.emit('session/event', session, event({
+        ...selected,
+        subtasks: selected.subtasks.map((subtask, index) => index === 0 ? { ...subtask, behavior: 'react' as const } : subtask),
+      }, 3))
+    }).toThrow(/changes or removes a selected subtask behavior/)
   })
 
   it('rejects an invalid persisted snapshot during late registration', async () => {
@@ -84,8 +135,10 @@ describe('H-routing durable plan invariants', () => {
 
   it('ignores unrelated events', async () => {
     const ctx = await setup()
-    expect(() => ctx.emit('session/event', Session.create(SessionId('h-plan-other')), {
-      type: 'turn/start', seq: 0, time: 0, data: { turn: 1 },
-    })).not.toThrow()
+    expect(() => {
+      ctx.emit('session/event', Session.create(SessionId('h-plan-other')), {
+        type: 'turn/start', seq: 0, time: 0, data: { turn: 1 },
+      })
+    }).not.toThrow()
   })
 })

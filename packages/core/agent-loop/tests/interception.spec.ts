@@ -177,6 +177,30 @@ describe('agent/pre-step', () => {
     expect(JSON.stringify(adapter.requests[0]!.messages)).not.toContain('original')
   })
 
+  it('enter can replace the prompt assembly for only the proposed step', async () => {
+    const adapter = new MockAdapter([textResponse('ok')])
+    const ctx = await harness(adapter)
+    ctx.tools.register(defineContentToolFixture({
+      name: 'echo',
+      description: 'echo',
+      parameters: {},
+      execute: async () => [{ type: 'text', text: 'ok' }],
+    }))
+    const agent = ctx.agentLoop.create(SessionId('assembly-override'), { provider: 'mock', model: 'mock' })
+
+    ctx.on('agent/pre-step', async ({ assembly }, next): Promise<PreStepDecision> => {
+      const decision = await next()
+      return decision.kind === 'reject'
+        ? decision
+        : { ...decision, assembly: { ...(decision.assembly ?? assembly), tools: [] } }
+    })
+
+    send(agent, 'go')
+    await waitForIdle(ctx, agent)
+
+    expect(adapter.requests[0]?.tools ?? []).toEqual([])
+  })
+
   it('enter with additional messages records separately sourced context in the turn', async () => {
     const adapter = new MockAdapter([textResponse('ok')])
     const ctx = await harness(adapter)

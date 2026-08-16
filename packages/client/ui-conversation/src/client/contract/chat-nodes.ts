@@ -28,6 +28,12 @@ export interface AssistantChatData {
   readonly finalNode?: AssistantMessageNode
 }
 
+/** Turn-owned presentation hints for Assistant steps with secondary text output. */
+export interface AssistantPresentationData {
+  /** Step numbers whose text blocks render behind a collapsed disclosure. */
+  readonly collapsedTextSteps: readonly number[]
+}
+
 /** Settled or interrupted Assistant payload with its durable presentation node. */
 export type FinalAssistantChatData = AssistantChatData & {
   readonly finalNode: AssistantMessageNode
